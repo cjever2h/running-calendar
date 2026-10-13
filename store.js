@@ -8,7 +8,8 @@ const W_FIELDS = ['id', 'date', 'type', 'title', 'planned_distance', 'target_pac
   'actual_distance', 'actual_time', 'avg_hr', 'rpe', 'memo', 'shoe_id'];
 const S_FIELDS = ['id', 'brand', 'model', 'nickname', 'color', 'purpose', 'purchase_date', 'initial_km',
   'max_km', 'retired', 'notes'];
-const NUMERIC = new Set(['planned_distance', 'actual_distance', 'avg_hr', 'rpe', 'initial_km', 'max_km']);
+const R_FIELDS = ['id', 'name', 'date', 'distance_km', 'goal_time', 'priority', 'location', 'notes'];
+const NUMERIC = new Set(['planned_distance', 'actual_distance', 'avg_hr', 'rpe', 'initial_km', 'max_km', 'distance_km']);
 
 function clean(obj, fields) {
   const out = {};
@@ -26,8 +27,15 @@ function clean(obj, fields) {
 /* ---------- local ---------- */
 const LKEY = 'running-calendar-v1';
 function lload() {
-  try { return JSON.parse(localStorage.getItem(LKEY)) || { workouts: [], shoes: [], settings: {} }; }
-  catch { return { workouts: [], shoes: [], settings: {} }; }
+  let d;
+  try { d = JSON.parse(localStorage.getItem(LKEY)) || {}; } catch { d = {}; }
+  d.workouts ||= []; d.shoes ||= []; d.settings ||= {};
+  if (!d.races) { // 예전 단일 대회 설정을 대회 목록으로 이전
+    d.races = d.settings.race_date ? [{ id: crypto.randomUUID(), name: d.settings.race_name || '목표 대회', date: d.settings.race_date,
+      distance_km: 42.195, goal_time: d.settings.goal_time || null, priority: 'A', created_at: new Date().toISOString() }] : [];
+    lsave(d);
+  }
+  return d;
 }
 function lsave(d) { localStorage.setItem(LKEY, JSON.stringify(d)); }
 
@@ -121,12 +129,35 @@ export async function saveSettings(s) {
   return chk(await sb.from('settings').upsert({ user_id: user.id, ...row, updated_at: new Date().toISOString() }).select().single());
 }
 
+/* ---------- races (목표 대회 여러 개) ---------- */
+export async function listRaces() {
+  if (!isCloud) return lload().races;
+  return chk(await sb.from('races').select('*').order('date'));
+}
+export async function saveRace(r) {
+  const row = clean(r, R_FIELDS);
+  if (!isCloud) {
+    const d = lload(); const i = d.races.findIndex(x => x.id === row.id);
+    const merged = { ...(i >= 0 ? d.races[i] : { created_at: new Date().toISOString() }), ...row };
+    if (i >= 0) d.races[i] = merged; else d.races.push(merged);
+    lsave(d); return merged;
+  }
+  return chk(await sb.from('races').upsert(row).select().single());
+}
+export async function deleteRace(id) {
+  if (!isCloud) { const d = lload(); d.races = d.races.filter(x => x.id !== id); lsave(d); return; }
+  chk(await sb.from('races').delete().eq('id', id));
+}
+
 /* ---------- backup ---------- */
 export async function exportAll() {
-  return { exported_at: new Date().toISOString(), settings: await getSettings(), shoes: await listShoes(), workouts: await listWorkouts() };
+  return { exported_at: new Date().toISOString(), races: await listRaces(), shoes: await listShoes(), workouts: await listWorkouts() };
 }
 export async function importAll(data) {
-  if (data.settings) await saveSettings(data.settings);
+  for (const r of data.races || []) await saveRace(r);
+  if (!data.races && data.settings?.race_date) {
+    await saveRace({ name: data.settings.race_name || '목표 대회', date: data.settings.race_date, distance_km: 42.195, goal_time: data.settings.goal_time, priority: 'A' });
+  }
   for (const s of data.shoes || []) await saveShoe(s);
   for (const w of data.workouts || []) await saveWorkout(w);
 }

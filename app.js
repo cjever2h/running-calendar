@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { DEFAULT_RACE } from './config.js';
-import { TYPES, SHOE_PURPOSES, taperPlan, trainingPaces, paceOf, fmtPace, toSec, fmtDuration } from './plan.js';
+import { TYPES, SHOE_PURPOSES, RACE_DISTANCES, PRIORITY, distLabel, racePace, taperPlan, trainingPaces, paceOf, fmtPace, toSec, fmtDuration } from './plan.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -8,7 +8,7 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
 
 const state = {
-  workouts: [], shoes: [], settings: {},
+  workouts: [], shoes: [], races: [],
   month: null, // Date (1일)
   selected: null, // 'YYYY-MM-DD'
   view: 'calendar',
@@ -39,6 +39,16 @@ function shoeKm(s) {
 }
 function byDate(date) { return state.workouts.filter(w => w.date === date); }
 
+/* ---------- 대회 ---------- */
+function upcomingRaces(from = todayIso()) { return state.races.filter(r => r.date >= from).sort((a, b) => a.date.localeCompare(b.date)); }
+function mainRace() { return upcomingRaces()[0] || null; }
+/** 훈련 페이스 기준: 가장 가까운 풀코스 대회의 목표 기록 */
+function paceRace() { return upcomingRaces().find(r => Math.abs(Number(r.distance_km) - 42.195) < 0.01 && r.goal_time) || null; }
+function raceSummary(r) {
+  const pace = racePace(r.goal_time, r.distance_km);
+  return `${distLabel(r.distance_km)}${r.goal_time ? ` · 목표 ${r.goal_time}${pace ? ` (${pace}/km)` : ''}` : ''}`;
+}
+
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), 2000);
@@ -50,20 +60,22 @@ async function guard(fn, okMsg) {
 
 /* ---------- 데이터 로드 ---------- */
 async function loadAll() {
-  const [w, s, st] = await Promise.all([store.listWorkouts(), store.listShoes(), store.getSettings()]);
-  state.workouts = w || []; state.shoes = s || []; state.settings = st || {};
+  const [w, s, r] = await Promise.all([store.listWorkouts(), store.listShoes(), store.listRaces()]);
+  state.workouts = w || []; state.shoes = s || []; state.races = r || [];
 }
 
 /* ---------- 헤더 ---------- */
 function renderHeader() {
-  const { race_name, race_date, goal_time } = state.settings;
-  if (race_date) {
-    const P = trainingPaces(goal_time);
-    $('#race-line').textContent = `${race_name || '목표 대회'} · ${race_date.replaceAll('-', '.')}${goal_time ? ` · 목표 ${goal_time} (${P.mp}/km)` : ''}`;
-    const d = diffDays(race_date, todayIso());
-    $('#dday').innerHTML = d > 0 ? `<b>D-${d}</b><small>대회까지</small>` : d === 0 ? `<b>D-DAY</b><small>화이팅!</small>` : `<b>D+${-d}</b><small>대회 이후</small>`;
+  const up = upcomingRaces();
+  if (up.length) {
+    const r = up[0];
+    const others = up.slice(1, 3).map(x => `${x.name} D-${diffDays(x.date, todayIso())}`).join(' · ');
+    $('#race-line').innerHTML = `${esc(r.name)} · ${r.date.replaceAll('-', '.')} · ${esc(raceSummary(r))}`
+      + (others ? `<span class="next-races">다음 대회: ${esc(others)}${up.length > 3 ? ` 외 ${up.length - 3}개` : ''}</span>` : '');
+    const d = diffDays(r.date, todayIso());
+    $('#dday').innerHTML = d > 0 ? `<b>D-${d}</b><small>${esc(r.name)}</small>` : `<b>D-DAY</b><small>화이팅!</small>`;
   } else {
-    $('#race-line').textContent = '설정 탭에서 목표 대회를 입력하세요';
+    $('#race-line').textContent = '설정 탭에서 목표 대회를 추가하세요';
     $('#dday').innerHTML = '';
   }
 }
@@ -93,7 +105,7 @@ function renderCalendar() {
   const first = new Date(y, m, 1);
   const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
   const today = todayIso();
-  const race = state.settings.race_date;
+  const raceByDate = new Map(state.races.map(r => [r.date, r]));
   let html = '';
   for (let i = 0; i < 42; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i);
@@ -104,7 +116,8 @@ function renderCalendar() {
     if (d.getMonth() !== m) cls.push('other');
     if (ds === today) cls.push('today');
     if (ds === state.selected) cls.push('selected');
-    if (ds === race || ws.some(w => w.type === 'race')) cls.push('race');
+    const dayRace = raceByDate.get(ds);
+    if (dayRace || ws.some(w => w.type === 'race')) cls.push('race');
     const sts = ws.filter(w => w.type !== 'rest').map(effStatus);
     let mark = '';
     if (sts.length) {
@@ -119,8 +132,10 @@ function renderCalendar() {
         const st = effStatus(w); const t = TYPES[w.type] || TYPES.easy;
         const c = st === 'done' ? 'done' : (st === 'missed' || st === 'skipped') ? 'missed' : w.type === 'rest' ? 'rest' : '';
         const km = w.status === 'done' && w.actual_distance ? w.actual_distance : w.planned_distance;
+        if (w.type === 'race') return `<div class="chip ${c}" style="--c:${t.color}" title="${esc(w.title)}">${esc(dayRace?.name || w.title)}</div>`;
         return `<div class="chip ${c}" style="--c:${t.color}" title="${esc(w.title)}">${esc(t.label)}${km ? `<span class="km"> ${Number(km)}k</span>` : ''}</div>`;
       }).join('')}
+      ${dayRace && !ws.some(w => w.type === 'race') ? `<div class="chip" style="--c:${TYPES.race.color}" title="${esc(dayRace.name)}">${esc(dayRace.name)}</div>` : ''}
     </div>`;
   }
   $('#cal-grid').innerHTML = html;
@@ -199,15 +214,15 @@ function renderDayPanel() {
   const panel = $('#day-panel');
   if (!ds) { panel.innerHTML = '<div class="empty">날짜를 선택하세요</div>'; return; }
   const ws = byDate(ds);
-  const race = state.settings.race_date;
-  const dd = race ? diffDays(race, ds) : null;
+  const nr = upcomingRaces(ds)[0];
+  const dd = nr ? diffDays(nr.date, ds) : null;
   panel.innerHTML = `
-    <div class="day-title"><h3>${korDate(ds)}</h3>${dd !== null && dd >= 0 ? `<span class="muted">${dd === 0 ? '대회일' : `대회 D-${dd}`}</span>` : ''}</div>
+    <div class="day-title"><h3>${korDate(ds)}</h3>${nr ? `<span class="muted">${dd === 0 ? `대회일: ${esc(nr.name)}` : `${esc(nr.name)} D-${dd}`}</span>` : ''}</div>
     ${ws.length ? ws.map(workoutCard).join('') : '<div class="empty">이 날짜에 등록된 훈련이 없어요</div>'}
     <button class="btn" id="add-workout" style="width:100%">+ 이 날짜에 훈련 추가</button>
-    ${!state.workouts.length && state.settings.race_date ? `<div class="empty" style="margin-top:12px">아직 훈련 계획이 없어요.<br>대회 기준 3주 테이퍼링 계획을 넣어볼까요?<br><button class="btn primary" id="quick-plan" style="margin-top:10px">테이퍼링 계획 넣기</button></div>` : ''}`;
+    ${!state.workouts.length && mainRace() ? `<div class="empty" style="margin-top:12px">아직 훈련 계획이 없어요.<br>대회 기준 3주 테이퍼링 계획을 넣어볼까요?<br><button class="btn primary" id="quick-plan" style="margin-top:10px">테이퍼링 계획 넣기</button></div>` : ''}`;
   $('#add-workout').onclick = () => openWorkoutModal({ date: ds, type: 'easy', status: 'planned' });
-  const qp = $('#quick-plan'); if (qp) qp.onclick = () => $('#load-plan').click();
+  const qp = $('#quick-plan'); if (qp) qp.onclick = () => loadPlan(mainRace()?.id);
 
   $$('.workout', panel).forEach(card => {
     const w = state.workouts.find(x => x.id === card.dataset.id);
@@ -270,7 +285,8 @@ function closeModal() { $('#modal').classList.add('hidden'); }
 
 function openWorkoutModal(w) {
   const isNew = !w.id;
-  const P = trainingPaces(state.settings.goal_time);
+  const pr = paceRace();
+  const P = trainingPaces(pr?.goal_time);
   openModal(isNew ? '훈련 추가' : '훈련 계획 수정', `
     <form id="w-form" class="form-grid">
       <label>날짜<input type="date" name="date" value="${w.date}" required></label>
@@ -279,7 +295,7 @@ function openWorkoutModal(w) {
       <label>계획 거리 (km)<input type="number" step="0.1" min="0" name="planned_distance" value="${w.planned_distance ?? ''}"></label>
       <label>목표 페이스 (/km)<input name="target_pace" value="${esc(w.target_pace ?? '')}" placeholder="${P.easy}"></label>
       <label class="full">상세 훈련 프로그램<textarea name="details" rows="6" placeholder="워밍업 / 본훈련 / 쿨다운 / 포인트">${esc(w.details ?? '')}</textarea></label>
-      <div class="full muted" style="font-size:12px">참고 페이스(목표 ${esc(state.settings.goal_time || '3:30:00')} 기준 추정): 이지 ${P.easy} · 마라톤 ${P.mp} · 역치 ${P.tempo} · 인터벌 ${P.interval}</div>
+      <div class="full muted" style="font-size:12px">참고 페이스(${pr ? `${esc(pr.name)} 목표 ${esc(pr.goal_time)}` : '풀코스 3:30:00'} 기준 추정): 이지 ${P.easy} · 마라톤 ${P.mp} · 역치 ${P.tempo} · 인터벌 ${P.interval}</div>
       <div class="full row gap"><button class="btn primary" type="submit">${isNew ? '추가' : '저장'}</button><button class="btn" type="button" id="w-cancel">취소</button></div>
     </form>`, body => {
     $('#w-cancel', body).onclick = closeModal;
@@ -420,11 +436,122 @@ function renderJournal() {
 }
 
 /* ---------- 설정 ---------- */
+function renderRaces() {
+  const today = todayIso();
+  const list = [...state.races].sort((a, b) => {
+    const pa = a.date < today, pb = b.date < today; // 예정 대회 먼저, 지난 대회는 최근순
+    if (pa !== pb) return pa ? 1 : -1;
+    return pa ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date);
+  });
+  $('#race-list').innerHTML = list.length ? list.map(r => {
+    const d = diffDays(r.date, today);
+    return `<div class="race-item ${d < 0 ? 'past' : ''} pri-${esc(r.priority || 'A')}" data-id="${r.id}">
+      <div class="race-d">${d > 0 ? `D-${d}` : d === 0 ? 'D-DAY' : '지남'}</div>
+      <div class="race-info">
+        <div class="race-name">${esc(r.name)}${r.priority ? `<span class="tag">${PRIORITY[r.priority] || ''}</span>` : ''}</div>
+        <div class="race-sub">${r.date.replaceAll('-', '.')} (${WD[parse(r.date).getDay()]}) · ${esc(raceSummary(r))}${r.location ? ` · ${esc(r.location)}` : ''}</div>
+        ${r.notes ? `<div class="race-sub">${esc(r.notes)}</div>` : ''}
+      </div>
+      <div class="race-act"><button class="btn sm" data-act="edit">수정</button><button class="btn sm danger" data-act="del">삭제</button></div>
+    </div>`;
+  }).join('') : '<div class="empty">등록된 대회가 없어요. 오른쪽 위 버튼으로 추가하세요.</div>';
+  $$('#race-list .race-item').forEach(el => {
+    const r = state.races.find(x => x.id === el.dataset.id);
+    $('[data-act=edit]', el).onclick = () => openRaceModal(r);
+    $('[data-act=del]', el).onclick = () => removeRace(r);
+  });
+  const up = upcomingRaces();
+  const sel = $('#plan-race'); const prev = sel.value;
+  sel.innerHTML = up.length ? up.map(r => `<option value="${r.id}">${esc(r.name)} (${r.date})</option>`).join('') : '<option value="">예정된 대회 없음</option>';
+  if (up.some(r => r.id === prev)) sel.value = prev;
+}
+
+function raceWorkout(date) { return state.workouts.find(w => w.type === 'race' && w.date === date); }
+
+function openRaceModal(r = {}) {
+  const isNew = !r.id;
+  const dist = r.distance_km ?? 42.195;
+  const preset = RACE_DISTANCES.find(x => Math.abs(x.km - Number(dist)) < 0.01);
+  openModal(isNew ? '대회 추가' : '대회 수정', `
+    <form id="r-form" class="form-grid">
+      <label class="full">대회명<input name="name" value="${esc(r.name ?? '')}" placeholder="예: 인천마라톤" required></label>
+      <label>대회 날짜<input type="date" name="date" value="${r.date ?? ''}" required></label>
+      <label>종목<select name="dist_sel">${RACE_DISTANCES.map(x => `<option value="${x.km}" ${preset?.km === x.km ? 'selected' : ''}>${x.label}</option>`).join('')}<option value="custom" ${preset ? '' : 'selected'}>기타 (직접 입력)</option></select></label>
+      <label class="${preset ? 'hidden' : ''}" id="r-custom">거리 (km)<input type="number" step="0.001" min="0" name="custom_km" value="${preset ? '' : dist}"></label>
+      <label>목표 기록 (h:mm:ss)<input name="goal_time" value="${esc(r.goal_time ?? '')}" placeholder="3:30:00"></label>
+      <label>우선순위<select name="priority">${Object.entries(PRIORITY).map(([k, v]) => `<option value="${k}" ${(r.priority || 'A') === k ? 'selected' : ''}>${k} · ${v}</option>`).join('')}</select></label>
+      <label>장소<input name="location" value="${esc(r.location ?? '')}" placeholder="예: 광화문"></label>
+      <div class="full pace-out" id="r-pace"></div>
+      <label class="full">메모<textarea name="notes" placeholder="배번, 출발 시간, 전략 등">${esc(r.notes ?? '')}</textarea></label>
+      ${isNew ? '<label class="full" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="add_cal" checked style="width:auto"> 캘린더에 대회 일정도 추가</label>' : ''}
+      <div class="full row gap"><button class="btn primary" type="submit">${isNew ? '추가' : '저장'}</button><button class="btn" type="button" id="r-cancel">취소</button></div>
+    </form>`, body => {
+    const f = $('#r-form', body);
+    const km = () => f.dist_sel.value === 'custom' ? Number(f.custom_km.value) : Number(f.dist_sel.value);
+    const upd = () => {
+      $('#r-custom', body).classList.toggle('hidden', f.dist_sel.value !== 'custom');
+      const p = racePace(f.goal_time.value, km());
+      $('#r-pace', body).innerHTML = p ? `목표 평균 페이스: <b>${p}/km</b>` : '';
+    };
+    f.dist_sel.onchange = upd; f.goal_time.oninput = upd; f.custom_km.oninput = upd; upd();
+    $('#r-cancel', body).onclick = closeModal;
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const goal = f.goal_time.value.trim();
+      if (goal && !toSec(goal)) { toast('목표 기록 형식: 3:30:00'); return; }
+      if (!km()) { toast('거리를 입력하세요'); return; }
+      const data = { ...r, name: f.name.value.trim(), date: f.date.value, distance_km: km(), goal_time: goal,
+        priority: f.priority.value, location: f.location.value.trim(), notes: f.notes.value.trim() };
+      const old = isNew ? null : { ...r };
+      const saved = await guard(() => store.saveRace(data), isNew ? '대회를 추가했어요' : '수정했어요');
+      const i = state.races.findIndex(x => x.id === saved.id);
+      if (i >= 0) state.races[i] = saved; else state.races.push(saved);
+      // 캘린더의 대회 일정 동기화
+      const pace = racePace(saved.goal_time, saved.distance_km);
+      const rw = old ? raceWorkout(old.date) : null;
+      if (rw) {
+        await saveW({ ...rw, date: saved.date, title: saved.name, planned_distance: saved.distance_km, target_pace: pace || rw.target_pace });
+      } else if (isNew && f.add_cal?.checked && !raceWorkout(saved.date)) {
+        await saveW({ date: saved.date, type: 'race', title: saved.name, planned_distance: saved.distance_km, target_pace: pace,
+          details: `대회: ${saved.name} (${distLabel(saved.distance_km)})${saved.goal_time ? `\n목표 기록: ${saved.goal_time}${pace ? ` (평균 ${pace}/km)` : ''}` : ''}${saved.location ? `\n장소: ${saved.location}` : ''}`, status: 'planned' });
+      }
+      closeModal();
+      refresh();
+    };
+  });
+}
+
+async function removeRace(r) {
+  if (!confirm(`'${r.name}' 대회를 삭제할까요?`)) return;
+  await guard(() => store.deleteRace(r.id), '대회를 삭제했어요');
+  state.races = state.races.filter(x => x.id !== r.id);
+  const rw = raceWorkout(r.date);
+  if (rw && confirm('캘린더에 있는 이 대회 일정도 삭제할까요?')) {
+    await store.deleteWorkout(rw.id);
+    state.workouts = state.workouts.filter(x => x.id !== rw.id);
+  }
+  refresh();
+}
+
+async function loadPlan(raceId) {
+  const r = state.races.find(x => x.id === raceId) || mainRace();
+  if (!r) { $('#plan-msg').textContent = '먼저 대회를 추가하세요.'; return; }
+  const plan = taperPlan(r.date, r.goal_time || '3:30:00', r.name);
+  const last = plan[plan.length - 1];
+  last.title = r.name; last.planned_distance = r.distance_km; last.target_pace = racePace(r.goal_time, r.distance_km) || last.target_pace;
+  const taken = new Set(state.workouts.map(w => w.date));
+  const add = plan.filter(p => !taken.has(p.date) && p.date >= todayIso());
+  if (!add.length) { $('#plan-msg').textContent = '해당 기간의 모든 날짜에 이미 훈련이 있어요.'; toast('이미 훈련이 들어 있어요'); return; }
+  if (!confirm(`${r.name} 기준 테이퍼링 훈련 ${add.length}개를 빈 날짜에 추가할까요?`)) return;
+  const rows = await guard(() => store.insertWorkouts(add), `${add.length}개 훈련을 추가했어요`);
+  state.workouts.push(...rows); state.workouts.sort((a, b) => a.date.localeCompare(b.date));
+  $('#plan-msg').textContent = `${add.length}개 추가 완료`;
+  state.selected = todayIso();
+  switchView('calendar');
+}
+
 function renderSettings() {
-  const s = state.settings;
-  $('#set-race-name').value = s.race_name || '';
-  $('#set-race-date').value = s.race_date || '';
-  $('#set-goal').value = s.goal_time || '';
+  renderRaces();
   $('#mode-line').textContent = store.isCloud
     ? `클라우드 동기화 모드 (Supabase) · 로그인: ${state.userEmail || ''} · 휴대폰·PC 어디서든 같은 데이터가 보여요.`
     : '로컬 모드 · 이 브라우저에만 저장됩니다. 백업을 자주 받아두세요.';
@@ -456,28 +583,8 @@ function bindStatic() {
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
   $('#add-shoe').onclick = () => openShoeModal();
 
-  $('#settings-form').onsubmit = async e => {
-    e.preventDefault();
-    const goal = $('#set-goal').value.trim();
-    if (goal && !toSec(goal)) { $('#settings-msg').textContent = '목표 기록 형식: 3:30:00'; return; }
-    state.settings = await guard(() => store.saveSettings({ race_name: $('#set-race-name').value.trim(), race_date: $('#set-race-date').value, goal_time: goal }), '대회 정보를 저장했어요');
-    $('#settings-msg').textContent = '저장됨';
-    refresh();
-  };
-  $('#load-plan').onclick = async () => {
-    const { race_date, goal_time, race_name } = state.settings;
-    if (!race_date) { $('#plan-msg').textContent = '먼저 대회 날짜를 저장하세요.'; return; }
-    const plan = taperPlan(race_date, goal_time || '3:30:00', race_name || '대회');
-    const taken = new Set(state.workouts.map(w => w.date));
-    const add = plan.filter(p => !taken.has(p.date));
-    if (!add.length) { $('#plan-msg').textContent = '모든 날짜에 이미 훈련이 있어요.'; return; }
-    if (!confirm(`${add.length}개의 훈련을 캘린더에 추가할까요?`)) return;
-    const rows = await guard(() => store.insertWorkouts(add), `${add.length}개 훈련을 추가했어요`);
-    state.workouts.push(...rows); state.workouts.sort((a, b) => a.date.localeCompare(b.date));
-    $('#plan-msg').textContent = `${add.length}개 추가 완료`;
-    state.selected = todayIso();
-    switchView('calendar');
-  };
+  $('#add-race').onclick = () => openRaceModal();
+  $('#load-plan').onclick = () => loadPlan($('#plan-race').value);
   $('#export-btn').onclick = async () => {
     const data = await store.exportAll();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -524,8 +631,10 @@ async function start() {
   state.userEmail = user.email;
   $('#auth-view').classList.add('hidden'); $('#app').classList.remove('hidden');
   await loadAll();
-  if (!state.settings.race_date && DEFAULT_RACE?.race_date && !state.workouts.length) {
-    try { state.settings = await store.saveSettings(DEFAULT_RACE); } catch (e) { console.warn(e); }
+  if (!state.races.length && DEFAULT_RACE?.race_date && !state.workouts.length) {
+    try {
+      state.races.push(await store.saveRace({ name: DEFAULT_RACE.race_name, date: DEFAULT_RACE.race_date, distance_km: 42.195, goal_time: DEFAULT_RACE.goal_time, priority: 'A' }));
+    } catch (e) { console.warn(e); }
   }
   const t = new Date();
   state.month = new Date(t.getFullYear(), t.getMonth(), 1);

@@ -13,6 +13,23 @@ export const TYPES = {
   race:     { label: '대회',         color: '#eab308' },
 };
 
+export const RACE_DISTANCES = [
+  { km: 42.195, label: '풀코스' },
+  { km: 21.0975, label: '하프' },
+  { km: 10, label: '10km' },
+  { km: 5, label: '5km' },
+];
+export const PRIORITY = { A: '메인 목표', B: '중요 대회', C: '연습/페이스런' };
+export function distLabel(km) {
+  const d = RACE_DISTANCES.find(x => Math.abs(x.km - Number(km)) < 0.01);
+  return d ? d.label : (km ? Number(km) + 'km' : '');
+}
+/** 대회 목표 기록 -> 평균 페이스 */
+export function racePace(goal, distKm) {
+  const s = toSec(goal);
+  return s && distKm ? fmtPace(s / Number(distKm)) : null;
+}
+
 export const SHOE_PURPOSES = ['데일리', '장거리', '스피드/인터벌', '레이스', '회복', '트레일'];
 
 /** "h:mm:ss" | "mm:ss" -> 초 */

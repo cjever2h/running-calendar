@@ -84,7 +84,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #bfdbfe; border-c
 /* Top bar */
 .topbar {
   background: var(--brand); color: #fff; padding: 14px 20px; display: flex; align-items: center;
-  justify-content: space-between; gap: 12px; position: sticky; top: 0; z-index: 20;
+  justify-content: space-between; gap: 12px;
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-title { font-weight: 800; font-size: 17px; }
@@ -94,7 +94,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #bfdbfe; border-c
 .dday small { color: #cbd5e1; font-size: 12px; }
 
 .tabs { display: flex; gap: 4px; background: #fff; border-bottom: 1px solid var(--line); padding: 0 12px;
-  position: sticky; top: 70px; z-index: 19; overflow-x: auto; }
+  position: sticky; top: 0; z-index: 19; overflow-x: auto; }
 .tab { border: none; background: none; padding: 13px 14px; font: inherit; font-weight: 700; color: var(--muted);
   border-bottom: 3px solid transparent; cursor: pointer; white-space: nowrap; }
 .tab.active { color: var(--ink); border-bottom-color: var(--primary); }
@@ -149,7 +149,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 16px; }
 .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
 /* Day panel */
-.day-panel { margin: 0; position: sticky; top: 130px; max-height: calc(100vh - 146px); overflow-y: auto; }
+.day-panel { margin: 0; position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow-y: auto; }
 .day-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .day-title h3 { margin: 0; font-size: 19px; }
 .workout { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; border-top: 5px solid var(--c); }
@@ -211,6 +211,20 @@ main { max-width: 1240px; margin: 0 auto; padding: 16px; }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff;
   padding: 10px 18px; border-radius: 99px; font-weight: 600; z-index: 60; font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
 
+/* Races */
+.next-races { display: block; font-size: 12px; color: #94a3b8; }
+.dday small { display: block; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: auto; }
+.race-item { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-left: 6px solid #eab308; border-radius: 12px; margin-bottom: 10px; }
+.race-item.pri-B { border-left-color: #3b82f6; }
+.race-item.pri-C { border-left-color: #94a3b8; }
+.race-item.past { opacity: .55; }
+.race-d { font-size: 20px; font-weight: 900; min-width: 70px; color: var(--ink); }
+.race-info { flex: 1; min-width: 0; }
+.race-name { font-weight: 800; font-size: 16px; }
+.race-sub { font-size: 13px; color: var(--muted); }
+.race-act { display: flex; gap: 6px; }
+@media (max-width: 640px) { .race-item { flex-wrap: wrap; } .race-act { width: 100%; } }
+
 /* Responsive */
 @media (max-width: 1000px) {
   .cal-layout { grid-template-columns: 1fr; }
@@ -219,7 +233,6 @@ main { max-width: 1240px; margin: 0 auto; padding: 16px; }
 @media (max-width: 640px) {
   main { padding: 10px; }
   .topbar { padding: 10px 14px; }
-  .tabs { top: 62px; }
   .stats-row { grid-template-columns: repeat(2, 1fr); }
   .day { min-height: 64px; padding: 3px; border-radius: 8px; }
   .chip { font-size: 10px; padding: 1px 3px; border-left-width: 3px; }

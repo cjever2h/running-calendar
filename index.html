@@ -96,18 +96,20 @@
       <!-- 설정 -->
       <section id="view-settings" class="view hidden">
         <div class="card">
-          <h2>목표 대회</h2>
-          <form id="settings-form" class="form-grid">
-            <label>대회명<input id="set-race-name" placeholder="예: JTBC 서울마라톤" /></label>
-            <label>대회 날짜<input type="date" id="set-race-date" /></label>
-            <label>목표 기록 (h:mm:ss)<input id="set-goal" placeholder="3:30:00" /></label>
-            <div class="full"><button class="btn primary" type="submit">저장</button> <span class="msg" id="settings-msg"></span></div>
-          </form>
+          <div class="section-head">
+            <h2>목표 대회</h2>
+            <button class="btn primary" id="add-race">+ 대회 추가</button>
+          </div>
+          <p class="muted" style="margin-top:-6px;font-size:13px">여러 대회를 등록할 수 있어요. 상단 D-day는 가장 가까운 대회 기준으로 표시됩니다.</p>
+          <div id="race-list"></div>
         </div>
         <div class="card">
           <h2>훈련 계획 불러오기</h2>
-          <p class="muted">대회 날짜와 목표 기록을 기준으로 대회 전 3주 테이퍼링 계획(주 5일: 화·수·목·토·일, 월·금 휴식)을 캘린더에 넣습니다. 이미 훈련이 있는 날짜는 건너뜁니다. 넣은 뒤 날짜별로 자유롭게 수정할 수 있어요.</p>
-          <button class="btn" id="load-plan">테이퍼링 계획 넣기</button>
+          <p class="muted">선택한 대회의 날짜와 목표 기록을 기준으로 대회 전 3주 테이퍼링 계획(주 5일: 화·수·목·토·일, 월·금 휴식)을 캘린더에 넣습니다. 이미 훈련이 있는 날짜는 건너뜁니다. 넣은 뒤 날짜별로 자유롭게 수정할 수 있어요.</p>
+          <div class="row gap wrap">
+            <select id="plan-race" style="width:auto;min-width:220px"></select>
+            <button class="btn" id="load-plan">테이퍼링 계획 넣기</button>
+          </div>
           <span class="msg" id="plan-msg"></span>
         </div>
         <div class="card">
