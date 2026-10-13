@@ -310,7 +310,7 @@ function renderShoes() {
     const last = runs.map(r => r.date).sort().pop();
     return `<div class="shoe ${s.retired ? 'retired' : ''} ${state.shoeFocus === s.id ? 'active-sel' : ''}" style="--c:${s.color || '#3b82f6'}" data-id="${s.id}">
       <div class="s-name">${esc(shoeName(s))}${s.retired ? '<span class="tag">은퇴</span>' : ''}${s.purpose ? `<span class="tag">${esc(s.purpose)}</span>` : ''}</div>
-      <div class="s-sub">${esc(s.brand)} ${esc(s.model)}${s.purchase_date ? ` · ${s.purchase_date} 구매` : ''}</div>
+      <div class="s-sub">${esc(s.brand)} ${esc(s.model)}${s.purchase_date ? ` · 첫 사용 ${s.purchase_date}` : ''}</div>
       <div class="s-km">${total.toFixed(1)}<small> / ${max} km</small></div>
       <div class="bar ${pct >= 100 ? 'over' : pct >= 80 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
       <div class="s-foot"><span>러닝 ${runs.length}회${Number(s.initial_km) ? ` · 등록 전 ${Number(s.initial_km)}km` : ''}</span><span>${last ? `최근 ${last.slice(5).replace('-', '/')}` : '기록 없음'}</span></div>
@@ -373,7 +373,7 @@ function openShoeModal(s = {}) {
       <label>별칭<input name="nickname" value="${esc(s.nickname ?? '')}" placeholder="예: 데일리 페가"></label>
       <label>용도<select name="purpose"><option value="">선택</option>${SHOE_PURPOSES.map(p => `<option ${p === s.purpose ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
       <label>색상<input type="color" name="color" value="${s.color || '#3b82f6'}" style="height:42px;padding:4px"></label>
-      <label>구매일<input type="date" name="purchase_date" value="${s.purchase_date ?? ''}"></label>
+      <label>첫 사용일<input type="date" name="purchase_date" value="${s.purchase_date ?? ''}"></label>
       <label>등록 전 누적 거리 (km)<input type="number" step="0.1" min="0" name="initial_km" value="${s.initial_km ?? 0}"></label>
       <label>교체 권장 거리 (km)<input type="number" step="1" min="1" name="max_km" value="${s.max_km ?? 700}"></label>
       <label class="full">메모<textarea name="notes" placeholder="사이즈, 착화감, 장단점 등">${esc(s.notes ?? '')}</textarea></label>
