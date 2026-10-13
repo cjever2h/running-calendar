@@ -1,0 +1,541 @@
+import * as store from './store.js';
+import { DEFAULT_RACE } from './config.js';
+import { TYPES, SHOE_PURPOSES, taperPlan, trainingPaces, paceOf, fmtPace, toSec, fmtDuration } from './plan.js';
+
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const WD = ['일', '월', '화', '수', '목', '금', '토'];
+
+const state = {
+  workouts: [], shoes: [], settings: {},
+  month: null, // Date (1일)
+  selected: null, // 'YYYY-MM-DD'
+  view: 'calendar',
+  shoeFocus: null,
+};
+
+/* ---------- 날짜 유틸 ---------- */
+function iso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function parse(s) { return new Date(s + 'T00:00:00'); }
+function todayIso() { return iso(new Date()); }
+function diffDays(a, b) { return Math.round((parse(a) - parse(b)) / 86400000); }
+function korDate(s) { const d = parse(s); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`; }
+function mondayOf(s) { const d = parse(s); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return iso(d); }
+
+/* ---------- 상태 판단 ---------- */
+function effStatus(w) {
+  if (w.type === 'rest') return w.status === 'done' ? 'done' : 'rest';
+  if (w.status === 'done') return 'done';
+  if (w.status === 'skipped') return 'skipped';
+  return w.date < todayIso() ? 'missed' : 'planned';
+}
+const STATUS_LABEL = { done: '완료', skipped: '미완료', missed: '미완료(기록 없음)', planned: '예정', rest: '휴식' };
+function shoeName(s) { return s ? (s.nickname || `${s.brand} ${s.model}`) : ''; }
+function shoeKm(s) {
+  const runs = state.workouts.filter(w => w.shoe_id === s.id && w.status === 'done');
+  const km = runs.reduce((a, w) => a + Number(w.actual_distance || w.planned_distance || 0), 0);
+  return { total: Number(s.initial_km || 0) + km, runs };
+}
+function byDate(date) { return state.workouts.filter(w => w.date === date); }
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), 2000);
+}
+async function guard(fn, okMsg) {
+  try { const r = await fn(); if (okMsg) toast(okMsg); return r; }
+  catch (e) { console.error(e); toast('오류: ' + (e.message || e)); throw e; }
+}
+
+/* ---------- 데이터 로드 ---------- */
+async function loadAll() {
+  const [w, s, st] = await Promise.all([store.listWorkouts(), store.listShoes(), store.getSettings()]);
+  state.workouts = w || []; state.shoes = s || []; state.settings = st || {};
+}
+
+/* ---------- 헤더 ---------- */
+function renderHeader() {
+  const { race_name, race_date, goal_time } = state.settings;
+  if (race_date) {
+    const P = trainingPaces(goal_time);
+    $('#race-line').textContent = `${race_name || '목표 대회'} · ${race_date.replaceAll('-', '.')}${goal_time ? ` · 목표 ${goal_time} (${P.mp}/km)` : ''}`;
+    const d = diffDays(race_date, todayIso());
+    $('#dday').innerHTML = d > 0 ? `<b>D-${d}</b><small>대회까지</small>` : d === 0 ? `<b>D-DAY</b><small>화이팅!</small>` : `<b>D+${-d}</b><small>대회 이후</small>`;
+  } else {
+    $('#race-line').textContent = '설정 탭에서 목표 대회를 입력하세요';
+    $('#dday').innerHTML = '';
+  }
+}
+
+/* ---------- 캘린더 ---------- */
+function renderMonthStats() {
+  const y = state.month.getFullYear(), m = state.month.getMonth();
+  const prefix = `${y}-${String(m + 1).padStart(2, '0')}`;
+  const list = state.workouts.filter(w => w.date.startsWith(prefix) && w.type !== 'rest');
+  const due = list.filter(w => w.date <= todayIso());
+  const done = list.filter(w => w.status === 'done');
+  const plannedKm = list.reduce((a, w) => a + Number(w.planned_distance || 0), 0);
+  const doneKm = done.reduce((a, w) => a + Number(w.actual_distance || w.planned_distance || 0), 0);
+  const rate = due.length ? Math.round(done.filter(w => w.date <= todayIso()).length / due.length * 100) : 0;
+  const missed = list.filter(w => ['missed', 'skipped'].includes(effStatus(w))).length;
+  $('#month-stats').innerHTML = `
+    <div class="stat"><div class="k">${m + 1}월 계획 거리</div><div class="v">${plannedKm.toFixed(1)}<small> km</small></div></div>
+    <div class="stat"><div class="k">완료 거리</div><div class="v">${doneKm.toFixed(1)}<small> km</small></div>
+      <div class="bar"><i style="width:${plannedKm ? Math.min(100, doneKm / plannedKm * 100) : 0}%"></i></div></div>
+    <div class="stat"><div class="k">완료율 (오늘까지)</div><div class="v">${rate}<small> %</small></div></div>
+    <div class="stat"><div class="k">완료 / 미완료 / 전체</div><div class="v">${done.length}<small> / ${missed} / ${list.length}회</small></div></div>`;
+}
+
+function renderCalendar() {
+  const y = state.month.getFullYear(), m = state.month.getMonth();
+  $('#month-title').textContent = `${y}년 ${m + 1}월`;
+  const first = new Date(y, m, 1);
+  const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
+  const today = todayIso();
+  const race = state.settings.race_date;
+  let html = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const ds = iso(d);
+    if (i >= 35 && d.getMonth() !== m) break;
+    const ws = byDate(ds);
+    const cls = ['day'];
+    if (d.getMonth() !== m) cls.push('other');
+    if (ds === today) cls.push('today');
+    if (ds === state.selected) cls.push('selected');
+    if (ds === race || ws.some(w => w.type === 'race')) cls.push('race');
+    const sts = ws.filter(w => w.type !== 'rest').map(effStatus);
+    let mark = '';
+    if (sts.length) {
+      if (sts.every(s => s === 'done')) mark = '<span class="st" style="color:var(--done)">✓</span>';
+      else if (sts.some(s => s === 'missed' || s === 'skipped')) mark = '<span class="st" style="color:var(--miss)">✗</span>';
+    }
+    const dow = d.getDay();
+    const numColor = dow === 0 ? 'sun' : dow === 6 ? 'sat' : '';
+    html += `<div class="${cls.join(' ')}" data-date="${ds}">
+      <div class="num"><span class="${numColor}">${d.getDate()}</span>${mark}</div>
+      ${ws.map(w => {
+        const st = effStatus(w); const t = TYPES[w.type] || TYPES.easy;
+        const c = st === 'done' ? 'done' : (st === 'missed' || st === 'skipped') ? 'missed' : w.type === 'rest' ? 'rest' : '';
+        const km = w.status === 'done' && w.actual_distance ? w.actual_distance : w.planned_distance;
+        return `<div class="chip ${c}" style="--c:${t.color}" title="${esc(w.title)}">${esc(t.label)}${km ? `<span class="km"> ${Number(km)}k</span>` : ''}</div>`;
+      }).join('')}
+    </div>`;
+  }
+  $('#cal-grid').innerHTML = html;
+  $$('#cal-grid .day').forEach(el => el.addEventListener('click', () => selectDate(el.dataset.date, true)));
+  $('#legend').innerHTML = Object.values(TYPES).map(t => `<span><i style="background:${t.color}"></i>${t.label}</span>`).join('')
+    + '<span><b style="color:var(--done)">✓</b> 완료</span><span><b style="color:var(--miss)">✗</b> 미완료</span>';
+  renderMonthStats();
+}
+
+function selectDate(ds, scroll = false) {
+  state.selected = ds;
+  const d = parse(ds);
+  if (d.getMonth() !== state.month.getMonth() || d.getFullYear() !== state.month.getFullYear()) {
+    state.month = new Date(d.getFullYear(), d.getMonth(), 1);
+  }
+  renderCalendar();
+  renderDayPanel();
+  if (scroll && window.innerWidth <= 1000) $('#day-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function shoeOptions(selected) {
+  const active = state.shoes.filter(s => !s.retired || s.id === selected);
+  return `<option value="">선택 안 함</option>` + active.map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${esc(shoeName(s))}${s.retired ? ' (은퇴)' : ''}</option>`).join('');
+}
+function lastShoeId() {
+  const done = state.workouts.filter(w => w.status === 'done' && w.shoe_id && state.shoes.find(s => s.id === w.shoe_id && !s.retired))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  return done[0]?.shoe_id || state.shoes.find(s => !s.retired)?.id || '';
+}
+
+function workoutCard(w) {
+  const t = TYPES[w.type] || TYPES.easy;
+  const st = effStatus(w);
+  const isRest = w.type === 'rest';
+  const pace = paceOf(w.actual_distance, w.actual_time);
+  const shoe = state.shoes.find(s => s.id === w.shoe_id);
+  return `<div class="workout" style="--c:${t.color}" data-id="${w.id}">
+    <div class="w-head"><span class="badge" style="--c:${t.color}">${t.label}</span>
+      <span class="status-badge ${st}">${STATUS_LABEL[st]}</span></div>
+    <div class="w-title">${esc(w.title)}</div>
+    <div class="w-meta">
+      ${w.planned_distance ? `<span>계획 <b>${Number(w.planned_distance)}km</b></span>` : ''}
+      ${w.target_pace ? `<span>목표 페이스 <b>${esc(w.target_pace)}/km</b></span>` : ''}
+      ${shoe ? `<span>러닝화 <b>${esc(shoeName(shoe))}</b></span>` : ''}
+    </div>
+    ${w.details ? `<div class="w-details">${esc(w.details)}</div>` : ''}
+    <div class="seg">
+      <button data-st="done" class="${w.status === 'done' ? 'on done' : ''}">✓ 완료</button>
+      <button data-st="skipped" class="${w.status === 'skipped' ? 'on skipped' : ''}">✗ 미완료</button>
+      <button data-st="planned" class="${w.status === 'planned' || !w.status ? 'on planned' : ''}">○ 예정</button>
+    </div>
+    ${isRest ? '' : `
+    <form class="rec-form">
+      <div class="rec-grid">
+        <label>실제 거리 (km)<input name="actual_distance" type="number" step="0.01" min="0" value="${w.actual_distance ?? ''}" placeholder="${w.planned_distance ?? ''}"></label>
+        <label>시간 (h:mm:ss)<input name="actual_time" value="${esc(w.actual_time ?? '')}" placeholder="0:55:30"></label>
+        <label>평균 심박<input name="avg_hr" type="number" min="0" value="${w.avg_hr ?? ''}" placeholder="bpm"></label>
+        <label>체감 강도 RPE <span class="rpe-val">${w.rpe ?? '-'}</span><input name="rpe" type="range" min="1" max="10" value="${w.rpe ?? 5}"></label>
+        <div class="full pace-out">평균 페이스: <b>${pace ? fmtPace(pace) + '/km' : '-'}</b></div>
+        <label class="full">러닝화<select name="shoe_id">${shoeOptions(w.shoe_id || (w.status === 'done' ? '' : lastShoeId()))}</select></label>
+        <label class="full">달리며 느낀 점 메모<textarea name="memo" placeholder="컨디션, 날씨, 페이스 느낌, 통증 여부, 보급 등">${esc(w.memo ?? '')}</textarea></label>
+      </div>
+      <button class="btn primary" type="submit">기록 저장</button>
+    </form>`}
+    ${isRest ? `<form class="rec-form"><label>메모<textarea name="memo" placeholder="회복 상태, 수면, 컨디션">${esc(w.memo ?? '')}</textarea></label>
+      <div style="margin-top:8px"><button class="btn primary" type="submit">메모 저장</button></div></form>` : ''}
+    <div class="w-actions">
+      <button class="btn sm" data-act="edit">계획 수정</button>
+      <button class="btn sm danger" data-act="del">삭제</button>
+    </div>
+  </div>`;
+}
+
+function renderDayPanel() {
+  const ds = state.selected;
+  const panel = $('#day-panel');
+  if (!ds) { panel.innerHTML = '<div class="empty">날짜를 선택하세요</div>'; return; }
+  const ws = byDate(ds);
+  const race = state.settings.race_date;
+  const dd = race ? diffDays(race, ds) : null;
+  panel.innerHTML = `
+    <div class="day-title"><h3>${korDate(ds)}</h3>${dd !== null && dd >= 0 ? `<span class="muted">${dd === 0 ? '대회일' : `대회 D-${dd}`}</span>` : ''}</div>
+    ${ws.length ? ws.map(workoutCard).join('') : '<div class="empty">이 날짜에 등록된 훈련이 없어요</div>'}
+    <button class="btn" id="add-workout" style="width:100%">+ 이 날짜에 훈련 추가</button>
+    ${!state.workouts.length && state.settings.race_date ? `<div class="empty" style="margin-top:12px">아직 훈련 계획이 없어요.<br>대회 기준 3주 테이퍼링 계획을 넣어볼까요?<br><button class="btn primary" id="quick-plan" style="margin-top:10px">테이퍼링 계획 넣기</button></div>` : ''}`;
+  $('#add-workout').onclick = () => openWorkoutModal({ date: ds, type: 'easy', status: 'planned' });
+  const qp = $('#quick-plan'); if (qp) qp.onclick = () => $('#load-plan').click();
+
+  $$('.workout', panel).forEach(card => {
+    const w = state.workouts.find(x => x.id === card.dataset.id);
+    const form = $('.rec-form', card);
+    const collect = () => {
+      if (!form) return {};
+      const fd = Object.fromEntries(new FormData(form));
+      if (form.rpe && !form.rpe.dataset.touched && w.rpe == null) delete fd.rpe;
+      return fd;
+    };
+    if (form?.rpe) form.rpe.addEventListener('input', e => { e.target.dataset.touched = '1'; $('.rpe-val', card).textContent = e.target.value; });
+    if (form?.actual_time) {
+      const upd = () => {
+        const p = paceOf(form.actual_distance.value || w.planned_distance, form.actual_time.value);
+        $('.pace-out b', card).textContent = p ? fmtPace(p) + '/km' : '-';
+      };
+      form.actual_time.addEventListener('input', upd); form.actual_distance.addEventListener('input', upd);
+    }
+    $$('.seg button', card).forEach(b => b.addEventListener('click', async () => {
+      const patch = { ...w, ...collect(), status: b.dataset.st };
+      if (patch.status === 'done' && w.type !== 'rest') {
+        if (!patch.actual_distance && w.planned_distance) patch.actual_distance = w.planned_distance;
+        if (!patch.shoe_id) patch.shoe_id = lastShoeId() || null;
+      }
+      await guard(() => saveW(patch), patch.status === 'done' ? '완료로 기록했어요' : patch.status === 'skipped' ? '미완료로 표시했어요' : '예정으로 되돌렸어요');
+    }));
+    form?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const patch = { ...w, ...collect() };
+      if (w.type !== 'rest' && w.status !== 'done' && (patch.actual_distance || patch.actual_time)) patch.status = 'done';
+      await guard(() => saveW(patch), '저장했어요');
+    });
+    $('[data-act=edit]', card).onclick = () => openWorkoutModal(w);
+    $('[data-act=del]', card).onclick = async () => {
+      if (!confirm(`'${w.title}' 훈련을 삭제할까요?`)) return;
+      await guard(() => store.deleteWorkout(w.id), '삭제했어요');
+      state.workouts = state.workouts.filter(x => x.id !== w.id);
+      refresh();
+    };
+  });
+}
+
+async function saveW(w) {
+  const saved = await store.saveWorkout(w);
+  const i = state.workouts.findIndex(x => x.id === saved.id);
+  if (i >= 0) state.workouts[i] = saved; else state.workouts.push(saved);
+  state.workouts.sort((a, b) => a.date.localeCompare(b.date));
+  refresh();
+  return saved;
+}
+
+/* ---------- 모달 ---------- */
+function openModal(title, html, onMount) {
+  $('#modal-title').textContent = title;
+  $('#modal-body').innerHTML = html;
+  $('#modal').classList.remove('hidden');
+  onMount?.($('#modal-body'));
+}
+function closeModal() { $('#modal').classList.add('hidden'); }
+
+function openWorkoutModal(w) {
+  const isNew = !w.id;
+  const P = trainingPaces(state.settings.goal_time);
+  openModal(isNew ? '훈련 추가' : '훈련 계획 수정', `
+    <form id="w-form" class="form-grid">
+      <label>날짜<input type="date" name="date" value="${w.date}" required></label>
+      <label>종류<select name="type">${Object.entries(TYPES).map(([k, t]) => `<option value="${k}" ${k === w.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+      <label class="full">훈련 제목<input name="title" value="${esc(w.title ?? '')}" placeholder="예: 인터벌 1km × 5" required></label>
+      <label>계획 거리 (km)<input type="number" step="0.1" min="0" name="planned_distance" value="${w.planned_distance ?? ''}"></label>
+      <label>목표 페이스 (/km)<input name="target_pace" value="${esc(w.target_pace ?? '')}" placeholder="${P.easy}"></label>
+      <label class="full">상세 훈련 프로그램<textarea name="details" rows="6" placeholder="워밍업 / 본훈련 / 쿨다운 / 포인트">${esc(w.details ?? '')}</textarea></label>
+      <div class="full muted" style="font-size:12px">참고 페이스(목표 ${esc(state.settings.goal_time || '3:30:00')} 기준 추정): 이지 ${P.easy} · 마라톤 ${P.mp} · 역치 ${P.tempo} · 인터벌 ${P.interval}</div>
+      <div class="full row gap"><button class="btn primary" type="submit">${isNew ? '추가' : '저장'}</button><button class="btn" type="button" id="w-cancel">취소</button></div>
+    </form>`, body => {
+    $('#w-cancel', body).onclick = closeModal;
+    const typeSel = $('[name=type]', body), titleIn = $('[name=title]', body);
+    typeSel.onchange = () => { if (!titleIn.value) titleIn.value = TYPES[typeSel.value].label; };
+    $('#w-form', body).onsubmit = async e => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target));
+      const saved = await guard(() => saveW({ ...w, ...fd, status: w.status || 'planned' }), isNew ? '훈련을 추가했어요' : '수정했어요');
+      closeModal();
+      selectDate(saved.date);
+    };
+  });
+}
+
+/* ---------- 러닝화 ---------- */
+function renderShoes() {
+  const grid = $('#shoe-grid');
+  if (!state.shoes.length) {
+    grid.innerHTML = '<div class="card empty" style="grid-column:1/-1">등록된 러닝화가 없어요. 오른쪽 위 버튼으로 추가해 보세요.</div>';
+    $('#shoe-history').innerHTML = ''; return;
+  }
+  const sorted = [...state.shoes].sort((a, b) => Number(a.retired) - Number(b.retired));
+  grid.innerHTML = sorted.map(s => {
+    const { total, runs } = shoeKm(s);
+    const max = Number(s.max_km || 700);
+    const pct = Math.min(100, total / max * 100);
+    const last = runs.map(r => r.date).sort().pop();
+    return `<div class="shoe ${s.retired ? 'retired' : ''} ${state.shoeFocus === s.id ? 'active-sel' : ''}" style="--c:${s.color || '#3b82f6'}" data-id="${s.id}">
+      <div class="s-name">${esc(shoeName(s))}${s.retired ? '<span class="tag">은퇴</span>' : ''}${s.purpose ? `<span class="tag">${esc(s.purpose)}</span>` : ''}</div>
+      <div class="s-sub">${esc(s.brand)} ${esc(s.model)}${s.purchase_date ? ` · ${s.purchase_date} 구매` : ''}</div>
+      <div class="s-km">${total.toFixed(1)}<small> / ${max} km</small></div>
+      <div class="bar ${pct >= 100 ? 'over' : pct >= 80 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
+      <div class="s-foot"><span>러닝 ${runs.length}회${Number(s.initial_km) ? ` · 등록 전 ${Number(s.initial_km)}km` : ''}</span><span>${last ? `최근 ${last.slice(5).replace('-', '/')}` : '기록 없음'}</span></div>
+      ${pct >= 80 ? `<div class="s-foot" style="color:${pct >= 100 ? 'var(--miss)' : '#c2410c'}">${pct >= 100 ? '교체 권장 거리를 넘었어요' : '교체 시기가 다가와요'}</div>` : ''}
+      <div class="s-actions">
+        <button class="btn sm" data-act="edit">수정</button>
+        <button class="btn sm" data-act="retire">${s.retired ? '다시 사용' : '은퇴'}</button>
+        <button class="btn sm danger" data-act="del">삭제</button>
+      </div>
+    </div>`;
+  }).join('');
+  $$('.shoe', grid).forEach(el => {
+    const s = state.shoes.find(x => x.id === el.dataset.id);
+    el.addEventListener('click', e => {
+      const act = e.target.closest('[data-act]')?.dataset.act;
+      if (act === 'edit') return openShoeModal(s);
+      if (act === 'retire') return guard(async () => { await saveS({ ...s, retired: !s.retired }); }, s.retired ? '다시 사용으로 변경' : '은퇴 처리했어요');
+      if (act === 'del') {
+        if (!confirm(`'${shoeName(s)}'를 삭제할까요? (훈련 기록의 러닝화 연결만 해제됩니다)`)) return;
+        return guard(async () => {
+          await store.deleteShoe(s.id);
+          state.shoes = state.shoes.filter(x => x.id !== s.id);
+          state.workouts.forEach(w => { if (w.shoe_id === s.id) w.shoe_id = null; });
+          if (state.shoeFocus === s.id) state.shoeFocus = null;
+          refresh();
+        }, '삭제했어요');
+      }
+      state.shoeFocus = state.shoeFocus === s.id ? null : s.id;
+      renderShoes();
+    });
+  });
+  renderShoeHistory();
+}
+function renderShoeHistory() {
+  const box = $('#shoe-history');
+  const s = state.shoes.find(x => x.id === state.shoeFocus);
+  if (!s) { box.innerHTML = '<p class="muted" style="font-size:13px">러닝화 카드를 누르면 해당 신발로 달린 기록을 볼 수 있어요.</p>'; return; }
+  const { runs } = shoeKm(s);
+  box.innerHTML = `<div class="card"><h2>${esc(shoeName(s))} 러닝 기록</h2>
+    ${s.notes ? `<p class="muted">${esc(s.notes)}</p>` : ''}
+    ${runs.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>날짜</th><th>훈련</th><th>거리</th><th>시간</th><th>페이스</th><th>메모</th></tr></thead><tbody>
+    ${[...runs].sort((a, b) => b.date.localeCompare(a.date)).map(w => {
+      const p = paceOf(w.actual_distance, w.actual_time);
+      return `<tr><td>${w.date}</td><td>${esc(w.title)}</td><td>${Number(w.actual_distance || w.planned_distance || 0)}km</td><td>${esc(w.actual_time || '-')}</td><td>${p ? fmtPace(p) : '-'}</td><td style="white-space:normal;min-width:200px">${esc(w.memo || '')}</td></tr>`;
+    }).join('')}</tbody></table></div>` : '<div class="empty">아직 이 러닝화로 완료한 훈련이 없어요</div>'}</div>`;
+}
+async function saveS(s) {
+  const saved = await store.saveShoe(s);
+  const i = state.shoes.findIndex(x => x.id === saved.id);
+  if (i >= 0) state.shoes[i] = saved; else state.shoes.push(saved);
+  refresh();
+  return saved;
+}
+function openShoeModal(s = {}) {
+  const isNew = !s.id;
+  openModal(isNew ? '러닝화 추가' : '러닝화 수정', `
+    <form id="s-form" class="form-grid">
+      <label>브랜드<input name="brand" value="${esc(s.brand ?? '')}" placeholder="예: 나이키" required></label>
+      <label>모델명<input name="model" value="${esc(s.model ?? '')}" placeholder="예: 페가수스 41" required></label>
+      <label>별칭<input name="nickname" value="${esc(s.nickname ?? '')}" placeholder="예: 데일리 페가"></label>
+      <label>용도<select name="purpose"><option value="">선택</option>${SHOE_PURPOSES.map(p => `<option ${p === s.purpose ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
+      <label>색상<input type="color" name="color" value="${s.color || '#3b82f6'}" style="height:42px;padding:4px"></label>
+      <label>구매일<input type="date" name="purchase_date" value="${s.purchase_date ?? ''}"></label>
+      <label>등록 전 누적 거리 (km)<input type="number" step="0.1" min="0" name="initial_km" value="${s.initial_km ?? 0}"></label>
+      <label>교체 권장 거리 (km)<input type="number" step="1" min="1" name="max_km" value="${s.max_km ?? 700}"></label>
+      <label class="full">메모<textarea name="notes" placeholder="사이즈, 착화감, 장단점 등">${esc(s.notes ?? '')}</textarea></label>
+      <div class="full row gap"><button class="btn primary" type="submit">${isNew ? '추가' : '저장'}</button><button class="btn" type="button" id="s-cancel">취소</button></div>
+    </form>`, body => {
+    $('#s-cancel', body).onclick = closeModal;
+    $('#s-form', body).onsubmit = async e => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target));
+      await guard(() => saveS({ ...s, ...fd, retired: s.retired || false }), isNew ? '러닝화를 추가했어요' : '수정했어요');
+      closeModal();
+    };
+  });
+}
+
+/* ---------- 일지 / 통계 ---------- */
+function renderJournal() {
+  const weeks = {};
+  for (const w of state.workouts) {
+    if (w.type === 'rest') continue;
+    const k = mondayOf(w.date);
+    weeks[k] ||= { plan: 0, done: 0, n: 0, d: 0, time: 0, dist: 0 };
+    const x = weeks[k];
+    x.plan += Number(w.planned_distance || 0); x.n++;
+    if (w.status === 'done') {
+      x.d++; const km = Number(w.actual_distance || w.planned_distance || 0); x.done += km;
+      const sec = toSec(w.actual_time); if (sec && w.actual_distance) { x.time += sec; x.dist += Number(w.actual_distance); }
+    }
+  }
+  const keys = Object.keys(weeks).sort().reverse();
+  $('#weekly-table').innerHTML = keys.length ? `<thead><tr><th>주 (월요일)</th><th>계획</th><th>완료</th><th>달성률</th><th>훈련 완료</th><th>평균 페이스</th><th>총 시간</th></tr></thead><tbody>
+    ${keys.map(k => { const x = weeks[k]; return `<tr${k === mondayOf(todayIso()) ? ' style="background:#eff6ff"' : ''}><td>${k.slice(5).replace('-', '/')}~</td><td>${x.plan.toFixed(1)}km</td><td><b>${x.done.toFixed(1)}km</b></td><td>${x.plan ? Math.round(x.done / x.plan * 100) : 0}%</td><td>${x.d}/${x.n}회</td><td>${x.dist ? fmtPace(x.time / x.dist) : '-'}</td><td>${x.time ? fmtDuration(x.time) : '-'}</td></tr>`; }).join('')}</tbody>`
+    : '<tbody><tr><td class="empty">훈련 데이터가 없어요</td></tr></tbody>';
+
+  const entries = state.workouts.filter(w => w.memo).sort((a, b) => b.date.localeCompare(a.date));
+  $('#journal-list').innerHTML = entries.length ? entries.map(w => {
+    const t = TYPES[w.type] || TYPES.easy; const sh = state.shoes.find(s => s.id === w.shoe_id);
+    const p = paceOf(w.actual_distance, w.actual_time);
+    return `<div class="entry" data-date="${w.date}"><div class="e-head"><b>${korDate(w.date)}</b><span class="badge" style="--c:${t.color}">${t.label}</span>
+      <span>${esc(w.title)}</span>${w.actual_distance ? `<span>${Number(w.actual_distance)}km</span>` : ''}${p ? `<span>${fmtPace(p)}/km</span>` : ''}${w.rpe ? `<span>RPE ${w.rpe}</span>` : ''}${sh ? `<span>러닝화: ${esc(shoeName(sh))}</span>` : ''}</div>
+      <div class="e-memo">${esc(w.memo)}</div></div>`;
+  }).join('') : '<div class="empty">아직 작성한 메모가 없어요. 캘린더에서 날짜를 눌러 느낀 점을 남겨보세요.</div>';
+  $$('#journal-list .entry').forEach(el => el.onclick = () => { switchView('calendar'); selectDate(el.dataset.date, true); });
+}
+
+/* ---------- 설정 ---------- */
+function renderSettings() {
+  const s = state.settings;
+  $('#set-race-name').value = s.race_name || '';
+  $('#set-race-date').value = s.race_date || '';
+  $('#set-goal').value = s.goal_time || '';
+  $('#mode-line').textContent = store.isCloud
+    ? `클라우드 동기화 모드 (Supabase) · 로그인: ${state.userEmail || ''} · 휴대폰·PC 어디서든 같은 데이터가 보여요.`
+    : '로컬 모드 · 이 브라우저에만 저장됩니다. 백업을 자주 받아두세요.';
+  $('#logout-btn').classList.toggle('hidden', !store.isCloud);
+}
+
+/* ---------- 공통 ---------- */
+function refresh() {
+  renderHeader();
+  if (state.view === 'calendar') { renderCalendar(); renderDayPanel(); }
+  if (state.view === 'shoes') renderShoes();
+  if (state.view === 'journal') renderJournal();
+  if (state.view === 'settings') renderSettings();
+}
+function switchView(v) {
+  state.view = v;
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
+  $$('.view').forEach(el => el.classList.toggle('hidden', el.id !== `view-${v}`));
+  refresh();
+}
+
+function bindStatic() {
+  $$('.tab').forEach(t => t.onclick = () => switchView(t.dataset.view));
+  $('#prev-month').onclick = () => { state.month = new Date(state.month.getFullYear(), state.month.getMonth() - 1, 1); renderCalendar(); };
+  $('#next-month').onclick = () => { state.month = new Date(state.month.getFullYear(), state.month.getMonth() + 1, 1); renderCalendar(); };
+  $('#today-btn').onclick = () => selectDate(todayIso());
+  $('#modal-close').onclick = closeModal;
+  $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+  $('#add-shoe').onclick = () => openShoeModal();
+
+  $('#settings-form').onsubmit = async e => {
+    e.preventDefault();
+    const goal = $('#set-goal').value.trim();
+    if (goal && !toSec(goal)) { $('#settings-msg').textContent = '목표 기록 형식: 3:30:00'; return; }
+    state.settings = await guard(() => store.saveSettings({ race_name: $('#set-race-name').value.trim(), race_date: $('#set-race-date').value, goal_time: goal }), '대회 정보를 저장했어요');
+    $('#settings-msg').textContent = '저장됨';
+    refresh();
+  };
+  $('#load-plan').onclick = async () => {
+    const { race_date, goal_time, race_name } = state.settings;
+    if (!race_date) { $('#plan-msg').textContent = '먼저 대회 날짜를 저장하세요.'; return; }
+    const plan = taperPlan(race_date, goal_time || '3:30:00', race_name || '대회');
+    const taken = new Set(state.workouts.map(w => w.date));
+    const add = plan.filter(p => !taken.has(p.date));
+    if (!add.length) { $('#plan-msg').textContent = '모든 날짜에 이미 훈련이 있어요.'; return; }
+    if (!confirm(`${add.length}개의 훈련을 캘린더에 추가할까요?`)) return;
+    const rows = await guard(() => store.insertWorkouts(add), `${add.length}개 훈련을 추가했어요`);
+    state.workouts.push(...rows); state.workouts.sort((a, b) => a.date.localeCompare(b.date));
+    $('#plan-msg').textContent = `${add.length}개 추가 완료`;
+    state.selected = todayIso();
+    switchView('calendar');
+  };
+  $('#export-btn').onclick = async () => {
+    const data = await store.exportAll();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `running-calendar-${todayIso()}.json`; a.click();
+  };
+  $('#import-file').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      if (!confirm('백업 파일의 데이터를 불러올까요? (같은 ID는 덮어씁니다)')) return;
+      await guard(() => store.importAll(data), '복원했어요');
+      await loadAll(); refresh();
+    } catch (err) { $('#data-msg').textContent = '파일을 읽을 수 없어요: ' + err.message; }
+    e.target.value = '';
+  };
+  $('#logout-btn').onclick = async () => { await store.signOut(); location.reload(); };
+}
+
+/* ---------- 인증 ---------- */
+function showAuth() {
+  $('#auth-view').classList.remove('hidden'); $('#app').classList.add('hidden');
+  const msg = $('#auth-msg');
+  const run = async (mode) => {
+    const email = $('#auth-email').value.trim(), pw = $('#auth-password').value;
+    if (!email || pw.length < 6) { msg.className = 'msg err'; msg.textContent = '이메일과 6자 이상 비밀번호를 입력하세요.'; return; }
+    msg.className = 'msg'; msg.textContent = '처리 중...';
+    try {
+      if (mode === 'signup') {
+        const r = await store.signUp(email, pw);
+        if (!r.session) { msg.textContent = '가입 확인 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인하세요.'; return; }
+      } else {
+        await store.signIn(email, pw);
+      }
+      await start();
+    } catch (e) { msg.className = 'msg err'; msg.textContent = e.message === 'Invalid login credentials' ? '이메일 또는 비밀번호가 맞지 않아요.' : e.message; }
+  };
+  $('#auth-form').onsubmit = e => { e.preventDefault(); run('signin'); };
+  $('#auth-signup').onclick = () => run('signup');
+}
+
+async function start() {
+  const user = await store.getUser();
+  if (!user) return showAuth();
+  state.userEmail = user.email;
+  $('#auth-view').classList.add('hidden'); $('#app').classList.remove('hidden');
+  await loadAll();
+  if (!state.settings.race_date && DEFAULT_RACE?.race_date && !state.workouts.length) {
+    try { state.settings = await store.saveSettings(DEFAULT_RACE); } catch (e) { console.warn(e); }
+  }
+  const t = new Date();
+  state.month = new Date(t.getFullYear(), t.getMonth(), 1);
+  state.selected = todayIso();
+  switchView(state.view);
+}
+
+(async function main() {
+  bindStatic();
+  try { await store.init(); }
+  catch (e) { document.body.insertAdjacentHTML('afterbegin', `<p style="padding:12px;color:#dc2626">Supabase 연결 실패: ${esc(e.message)}</p>`); }
+  await start();
+})();
