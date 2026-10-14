@@ -1,0 +1,17 @@
+{
+  "name": "런닝 캘린더 - 마라톤 훈련 기록",
+  "short_name": "런닝캘린더",
+  "description": "마라톤 훈련 계획, 완료 체크, 러닝 메모, 러닝화·컨디션 관리",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

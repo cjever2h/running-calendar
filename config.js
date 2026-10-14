@@ -5,3 +5,6 @@ export const SUPABASE_ANON_KEY = 'sb_publishable_8zyr4Cia8y1JiVOguUC12Q_ZOknEH3F
 
 // 처음 실행할 때 자동으로 들어가는 기본 목표 대회 (설정 탭에서 언제든 변경 가능)
 export const DEFAULT_RACE = { race_name: 'JTBC 서울마라톤', race_date: '2026-11-01', goal_time: '3:30:00' };
+
+// 웹 푸시(오늘 훈련 알림) 공개키
+export const VAPID_PUBLIC_KEY = 'BP3DMkJ3mS5XoTWSwwaCzShaw3YPhit-JQBOOEZzNswstaPBahvoe38OG1nmQoemYu3cKhYyNCXPTY2UZZue6Oc';

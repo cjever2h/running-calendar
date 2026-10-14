@@ -2,12 +2,13 @@
 
 export const TYPES = {
   easy:     { label: '이지런',       color: '#22c55e' },
-  recovery: { label: '회복런',       color: '#84cc16' },
-  long:     { label: '장거리',       color: '#3b82f6' },
-  mp:       { label: '마라톤페이스', color: '#a855f7' },
-  tempo:    { label: '템포/역치',    color: '#f97316' },
+  long:     { label: 'LSD',          color: '#3b82f6' },
+  tempo:    { label: '템포',         color: '#f97316' },
   interval: { label: '인터벌',       color: '#ef4444' },
+  recovery: { label: '회복런',       color: '#84cc16' },
+  mp:       { label: '마라톤페이스', color: '#a855f7' },
   hill:     { label: '업힐',         color: '#b45309' },
+  cross:    { label: '크로스',       color: '#0ea5e9' },
   strength: { label: '보강운동',     color: '#14b8a6' },
   rest:     { label: '휴식',         color: '#94a3b8' },
   race:     { label: '대회',         color: '#eab308' },

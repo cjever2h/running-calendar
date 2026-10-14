@@ -4,8 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="런닝캘린더" />
   <title>런닝 캘린더 | 마라톤 훈련 기록</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230f172a'/><text x='50' y='68' font-size='54' text-anchor='middle' fill='%23facc15' font-family='Arial' font-weight='bold'>42</text></svg>" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
   <link rel="stylesheet" href="style.css" />
@@ -24,6 +30,7 @@
           <button type="submit" class="btn primary grow" data-mode="signin">로그인</button>
           <button type="button" class="btn grow" id="auth-signup">회원가입</button>
         </div>
+        <button type="button" class="link-btn" id="auth-forgot">비밀번호를 잊으셨나요?</button>
         <p id="auth-msg" class="msg"></p>
       </form>
     </div>
@@ -44,6 +51,7 @@
 
     <nav class="tabs" id="tabs">
       <button class="tab active" data-view="calendar">캘린더</button>
+      <button class="tab" data-view="strategy">대회 전략</button>
       <button class="tab" data-view="shoes">러닝화</button>
       <button class="tab" data-view="journal">통계·일지</button>
       <button class="tab" data-view="settings">설정</button>
@@ -54,8 +62,10 @@
       <section id="view-calendar" class="view">
         <div class="action-bar">
           <label class="btn primary">가민 이미지로 기록 입력<input type="file" id="garmin-input" accept="image/*" multiple hidden /></label>
-          <span class="muted">가민 기록 공유 이미지를 올리면 날짜·거리·시간·페이스·심박을 자동으로 읽어 기록해요 (여러 장 가능)</span>
+          <label class="btn">GPX·FIT·CSV 가져오기<input type="file" id="file-import" accept=".gpx,.fit,.csv,application/gpx+xml,text/csv" multiple hidden /></label>
+          <span class="muted">가민 공유 이미지, 가민/스트라바에서 내보낸 GPX·FIT·CSV 파일로 기록을 한 번에 넣을 수 있어요</span>
         </div>
+        <div id="alerts" class="alerts"></div>
         <div class="stats-row" id="month-stats"></div>
         <div class="cal-layout">
           <div class="card cal-card">
@@ -63,6 +73,7 @@
               <button class="icon-btn" id="prev-month" aria-label="이전 달">‹</button>
               <h2 id="month-title"></h2>
               <button class="icon-btn" id="next-month" aria-label="다음 달">›</button>
+              <button class="btn sm toggle" id="heat-btn" title="완료 거리로 날짜 칸 색칠">거리 히트맵</button>
               <button class="btn sm" id="today-btn">오늘</button>
             </div>
             <div class="cal-grid weekdays">
@@ -75,12 +86,22 @@
         </div>
       </section>
 
+      <!-- 대회 전략 -->
+      <section id="view-strategy" class="view hidden">
+        <div class="section-head wrap">
+          <h2>대회 당일 전략</h2>
+          <select id="strategy-race" style="width:auto;min-width:220px"></select>
+        </div>
+        <div id="strategy-body"></div>
+      </section>
+
       <!-- 러닝화 -->
       <section id="view-shoes" class="view hidden">
         <div class="section-head">
           <h2>내 러닝화</h2>
           <button class="btn primary" id="add-shoe">+ 러닝화 추가</button>
         </div>
+        <p class="muted" style="font-size:13px;margin-top:-6px">훈련 기록에 러닝화를 지정하면 거리가 자동으로 누적돼요. 교체 권장 거리(보통 600~800km)의 80%·90%·100%에 도달하면 알려드려요.</p>
         <div class="shoe-grid" id="shoe-grid"></div>
         <div id="shoe-history"></div>
       </section>
@@ -92,9 +113,12 @@
             <h2>훈련 통계</h2>
             <div class="row gap wrap">
               <div class="seg-tabs" id="stat-tabs">
-                <button data-k="week" class="on">주간</button>
+                <button data-k="week" class="on">주간·부하</button>
                 <button data-k="month">월간</button>
                 <button data-k="type">훈련별</button>
+                <button data-k="cum">누적·기록</button>
+                <button data-k="heat">히트맵</button>
+                <button data-k="cond">컨디션</button>
               </div>
               <select id="stat-range" style="width:auto"></select>
             </div>
@@ -104,6 +128,7 @@
             <div class="chart-box"><canvas id="stat-chart"></canvas></div>
             <div class="chart-box hidden" id="stat-chart2-box"><canvas id="stat-chart2"></canvas></div>
           </div>
+          <div id="stat-extra"></div>
           <p class="muted chart-note" id="stat-note"></p>
           <div class="table-wrap"><table class="table" id="stat-table"></table></div>
         </div>
@@ -120,27 +145,52 @@
             <h2>목표 대회</h2>
             <button class="btn primary" id="add-race">+ 대회 추가</button>
           </div>
-          <p class="muted" style="margin-top:-6px;font-size:13px">여러 대회를 등록할 수 있어요. 상단 D-day는 가장 가까운 대회 기준으로 표시됩니다.</p>
+          <p class="muted" style="margin-top:-6px;font-size:13px">여러 대회를 등록할 수 있어요. 상단 D-day는 가장 가까운 대회 기준이고, 대회가 지나면 자동으로 다음 대회로 바뀌어요. 훈련 계획은 대회별로 따로 관리돼요.</p>
           <div id="race-list"></div>
         </div>
         <div class="card">
-          <h2>훈련 계획 불러오기</h2>
-          <p class="muted">선택한 대회의 날짜와 목표 기록을 기준으로 대회 전 3주 테이퍼링 계획(주 5일: 화·수·목·토·일, 월·금 휴식)을 캘린더에 넣습니다. 이미 훈련이 있는 날짜는 건너뜁니다. 넣은 뒤 날짜별로 자유롭게 수정할 수 있어요.</p>
+          <h2>훈련 계획 만들기</h2>
+          <p class="muted">12~16주 기준 <b>베이스 → 빌드업 → 피크 → 테이퍼링</b> 단계 계획을 목표 기록의 페이스 존으로 만들어요. 주간 거리 증가 10% 이내, 4주마다 회복주, 직전 대회 후 회복 기간을 반영하고, 미리보기로 확인한 뒤 캘린더에 넣어요.</p>
           <div class="row gap wrap">
             <select id="plan-race" style="width:auto;min-width:220px"></select>
-            <button class="btn" id="load-plan">테이퍼링 계획 넣기</button>
+            <button class="btn primary" id="load-plan">계획 만들기</button>
           </div>
           <span class="msg" id="plan-msg"></span>
         </div>
         <div class="card">
-          <h2>데이터</h2>
+          <h2>내 프로필 (페이스·심박 존)</h2>
+          <form id="profile-form" class="form-grid">
+            <label>출생연도<input type="number" name="birth_year" min="1930" max="2015" placeholder="1974"></label>
+            <label>최대 심박 (bpm)<input type="number" name="max_hr" min="120" max="230" placeholder="모르면 비워두기 (나이로 추정)"></label>
+            <label>안정시 심박 (bpm)<input type="number" name="resting_hr" min="30" max="110" placeholder="아침 기상 직후"></label>
+            <label>체중 (kg)<input type="number" step="0.1" name="weight" placeholder="카보로딩 계산용"></label>
+            <div class="full muted" style="font-size:13px" id="profile-zones"></div>
+            <div class="full"><button class="btn primary" type="submit">저장</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <h2>오늘 훈련 알림</h2>
+          <p class="muted" style="font-size:13px">매일 아침 그날의 훈련을 푸시 알림으로 보내드려요. 아이폰은 Safari에서 공유 버튼 → <b>홈 화면에 추가</b>로 앱을 설치한 뒤, 설치된 앱에서 알림을 켜야 해요.</p>
+          <div class="row gap wrap">
+            <span>상태: <b id="notify-state">꺼짐</b></span>
+            <label style="flex-direction:row;align-items:center;gap:6px">알림 시각<select id="notify-hour" style="width:auto"><option value="4">오전 4시</option><option value="5">오전 5시</option><option value="6">오전 6시</option><option value="7">오전 7시</option><option value="8">오전 8시</option><option value="9">오전 9시</option><option value="10">오전 10시</option></select></label>
+            <button class="btn primary" id="notify-btn">알림 켜기</button>
+            <button class="btn" id="notify-test">테스트 알림</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>데이터·백업·계정</h2>
           <p class="muted" id="mode-line"></p>
           <div class="row gap wrap">
+            <button class="btn" id="backup-now">지금 백업</button>
             <button class="btn" id="export-btn">JSON 백업 다운로드</button>
             <label class="btn file-btn">JSON 복원<input type="file" id="import-file" accept="application/json" hidden /></label>
+            <button class="btn" id="pw-btn">비밀번호 변경</button>
             <button class="btn danger" id="logout-btn">로그아웃</button>
           </div>
           <span class="msg" id="data-msg"></span>
+          <h3 style="margin-top:16px;font-size:15px">자동 백업 기록</h3>
+          <div id="backup-list"></div>
         </div>
       </section>
     </main>

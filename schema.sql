@@ -113,3 +113,67 @@ create policy "run-images update own" on storage.objects for update to authentic
 drop policy if exists "run-images delete own" on storage.objects;
 create policy "run-images delete own" on storage.objects for delete to authenticated
   using (bucket_id = 'run-images' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- v2: 구조화된 훈련, 대회별 계획, 컨디션, 알림, 백업
+alter table public.workouts add column if not exists planned_duration text;
+alter table public.workouts add column if not exists target_hr text;
+alter table public.workouts add column if not exists phase text;
+alter table public.workouts add column if not exists race_id uuid references public.races(id) on delete set null;
+alter table public.workouts add column if not exists source text;
+alter table public.workouts add column if not exists max_hr integer;
+alter table public.workouts add column if not exists cadence integer;
+create index if not exists workouts_race_idx on public.workouts (race_id);
+
+alter table public.races add column if not exists result_time text;
+alter table public.races add column if not exists strategy jsonb not null default '{}'::jsonb;
+
+alter table public.settings add column if not exists birth_year integer;
+alter table public.settings add column if not exists max_hr integer;
+alter table public.settings add column if not exists resting_hr integer;
+alter table public.settings add column if not exists weight numeric;
+alter table public.settings add column if not exists notify_enabled boolean not null default false;
+alter table public.settings add column if not exists notify_hour integer not null default 6;
+alter table public.settings add column if not exists last_backup_at timestamptz;
+alter table public.settings add column if not exists last_notified_on date;
+
+create table if not exists public.daily_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date date not null,
+  fatigue integer check (fatigue is null or fatigue between 1 and 10),
+  sleep_hours numeric,
+  sleep_quality integer check (sleep_quality is null or sleep_quality between 1 and 5),
+  pain_areas text[] not null default '{}',
+  pain_level integer check (pain_level is null or pain_level between 0 and 10),
+  weight numeric,
+  resting_hr integer,
+  note text,
+  updated_at timestamptz not null default now(),
+  unique (user_id, date)
+);
+alter table public.daily_logs enable row level security;
+drop policy if exists "own daily_logs" on public.daily_logs;
+create policy "own daily_logs" on public.daily_logs for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+grant select, insert, update, delete on public.daily_logs to authenticated;
+
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+alter table public.push_subscriptions enable row level security;
+drop policy if exists "own push" on public.push_subscriptions;
+create policy "own push" on public.push_subscriptions for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+grant select, insert, update, delete on public.push_subscriptions to authenticated;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('backups', 'backups', false, 20971520, array['application/json'])
+on conflict (id) do nothing;
+drop policy if exists "backups own all" on storage.objects;
+create policy "backups own all" on storage.objects for all to authenticated
+  using (bucket_id = 'backups' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'backups' and (storage.foldername(name))[1] = auth.uid()::text);

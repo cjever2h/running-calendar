@@ -5,11 +5,15 @@ export const isCloud = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 let sb = null;
 
 const W_FIELDS = ['id', 'date', 'type', 'title', 'planned_distance', 'target_pace', 'details', 'status',
-  'actual_distance', 'actual_time', 'avg_hr', 'rpe', 'memo', 'shoe_id', 'images'];
+  'actual_distance', 'actual_time', 'avg_hr', 'rpe', 'memo', 'shoe_id', 'images',
+  'planned_duration', 'target_hr', 'phase', 'race_id', 'source', 'max_hr', 'cadence'];
 const S_FIELDS = ['id', 'brand', 'model', 'nickname', 'color', 'purpose', 'purchase_date', 'initial_km',
   'max_km', 'retired', 'notes'];
-const R_FIELDS = ['id', 'name', 'date', 'distance_km', 'goal_time', 'priority', 'location', 'notes'];
-const NUMERIC = new Set(['planned_distance', 'actual_distance', 'avg_hr', 'rpe', 'initial_km', 'max_km', 'distance_km']);
+const R_FIELDS = ['id', 'name', 'date', 'distance_km', 'goal_time', 'priority', 'location', 'notes', 'result_time', 'strategy'];
+const L_FIELDS = ['date', 'fatigue', 'sleep_hours', 'sleep_quality', 'pain_areas', 'pain_level', 'weight', 'resting_hr', 'note'];
+const P_FIELDS = ['birth_year', 'max_hr', 'resting_hr', 'weight', 'notify_enabled', 'notify_hour'];
+const NUMERIC = new Set(['planned_distance', 'actual_distance', 'avg_hr', 'rpe', 'initial_km', 'max_km', 'distance_km', 'max_hr', 'cadence',
+  'fatigue', 'sleep_hours', 'sleep_quality', 'pain_level', 'weight', 'resting_hr', 'birth_year', 'notify_hour']);
 
 function clean(obj, fields) {
   const out = {};
@@ -64,6 +68,9 @@ export async function signOut() { if (isCloud) await sb.auth.signOut(); }
 export function onAuth(cb) { if (isCloud) sb.auth.onAuthStateChange((_e, s) => cb(s?.user ?? null)); }
 
 function chk({ data, error }) { if (error) throw error; return data; }
+/** 쓰기 성공 시 마지막 저장 시각 기록 */
+function wchk(res) { const d = chk(res); localStorage.setItem('rc-last-sync', new Date().toISOString()); return d; }
+export const lastSync = () => localStorage.getItem('rc-last-sync');
 
 /* ---------- workouts ---------- */
 export async function listWorkouts() {
@@ -79,17 +86,17 @@ export async function saveWorkout(w) {
     lsave(d); return merged;
   }
   row.updated_at = new Date().toISOString();
-  return chk(await sb.from('workouts').upsert(row).select().single());
+  return wchk(await sb.from('workouts').upsert(row).select().single());
 }
 export async function insertWorkouts(list) {
   const rows = list.map(w => clean(w, W_FIELDS));
   if (!rows.length) return [];
   if (!isCloud) { const d = lload(); d.workouts.push(...rows.map(r => ({ ...r, created_at: new Date().toISOString() }))); lsave(d); return rows; }
-  return chk(await sb.from('workouts').insert(rows).select());
+  return wchk(await sb.from('workouts').insert(rows).select());
 }
 export async function deleteWorkout(id) {
   if (!isCloud) { const d = lload(); d.workouts = d.workouts.filter(x => x.id !== id); lsave(d); return; }
-  chk(await sb.from('workouts').delete().eq('id', id));
+  wchk(await sb.from('workouts').delete().eq('id', id));
 }
 
 /* ---------- shoes ---------- */
@@ -106,14 +113,14 @@ export async function saveShoe(s) {
     if (i >= 0) d.shoes[i] = merged; else d.shoes.push(merged);
     lsave(d); return merged;
   }
-  return chk(await sb.from('shoes').upsert(row).select().single());
+  return wchk(await sb.from('shoes').upsert(row).select().single());
 }
 export async function deleteShoe(id) {
   if (!isCloud) {
     const d = lload(); d.shoes = d.shoes.filter(x => x.id !== id);
     d.workouts.forEach(w => { if (w.shoe_id === id) w.shoe_id = null; }); lsave(d); return;
   }
-  chk(await sb.from('shoes').delete().eq('id', id));
+  wchk(await sb.from('shoes').delete().eq('id', id));
 }
 
 /* ---------- settings ---------- */
@@ -124,10 +131,56 @@ export async function getSettings() {
 }
 export async function saveSettings(s) {
   const row = { race_name: s.race_name || null, race_date: s.race_date || null, goal_time: s.goal_time || null };
-  if (!isCloud) { const d = lload(); d.settings = row; lsave(d); return row; }
+  if (!isCloud) { const d = lload(); d.settings = { ...d.settings, ...row }; lsave(d); return d.settings; }
   const user = await getUser();
-  return chk(await sb.from('settings').upsert({ user_id: user.id, ...row, updated_at: new Date().toISOString() }).select().single());
+  return wchk(await sb.from('settings').upsert({ user_id: user.id, ...row, updated_at: new Date().toISOString() }).select().single());
 }
+/** 프로필(나이·심박·체중)·알림 설정 */
+export async function saveProfile(p) {
+  const row = {};
+  for (const f of P_FIELDS) if (f in p) { let v = p[f]; if (v === '' || v === undefined) v = null; if (v !== null && NUMERIC.has(f)) v = Number(v); row[f] = v; }
+  if (!isCloud) { const d = lload(); d.settings = { ...d.settings, ...row }; lsave(d); return d.settings; }
+  const user = await getUser();
+  return wchk(await sb.from('settings').upsert({ user_id: user.id, ...row, updated_at: new Date().toISOString() }).select().single());
+}
+
+/* ---------- daily logs (컨디션) ---------- */
+export async function listLogs() {
+  if (!isCloud) return lload().logs || [];
+  return chk(await sb.from('daily_logs').select('*').order('date'));
+}
+export async function saveLog(l) {
+  const row = {};
+  for (const f of L_FIELDS) if (f in l) { let v = l[f]; if (v === '' || v === undefined) v = null; if (v !== null && NUMERIC.has(f)) v = Number(v); row[f] = v; }
+  row.pain_areas ||= [];
+  if (!isCloud) { const d = lload(); d.logs ||= []; const i = d.logs.findIndex(x => x.date === row.date); if (i >= 0) d.logs[i] = { ...d.logs[i], ...row }; else d.logs.push(row); lsave(d); return row; }
+  const user = await getUser();
+  return wchk(await sb.from('daily_logs').upsert({ user_id: user.id, ...row, updated_at: new Date().toISOString() }, { onConflict: 'user_id,date' }).select().single());
+}
+
+/* ---------- auth: 비밀번호 ---------- */
+export async function sendPasswordReset(email) {
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/?reset=1' });
+  if (error) throw error;
+}
+export async function updatePassword(pw) {
+  const { error } = await sb.auth.updateUser({ password: pw });
+  if (error) throw error;
+}
+export function onPasswordRecovery(cb) { if (isCloud) sb.auth.onAuthStateChange(e => { if (e === 'PASSWORD_RECOVERY') cb(); }); }
+
+/* ---------- push 구독 ---------- */
+export async function savePushSub(sub) {
+  const j = sub.toJSON();
+  const user = await getUser();
+  return wchk(await sb.from('push_subscriptions').upsert({ user_id: user.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, user_agent: navigator.userAgent.slice(0, 200) }, { onConflict: 'endpoint' }).select().single());
+}
+export async function deletePushSub(endpoint) { if (isCloud) await sb.from('push_subscriptions').delete().eq('endpoint', endpoint); }
+
+/* ---------- 오프라인 캐시 ---------- */
+const CKEY = 'rc-offline-cache';
+export function cacheSnapshot(data) { try { localStorage.setItem(CKEY, JSON.stringify({ at: new Date().toISOString(), ...data })); } catch { } }
+export function readSnapshot() { try { return JSON.parse(localStorage.getItem(CKEY)); } catch { return null; } }
 
 /* ---------- images (가민 기록 이미지) ---------- */
 const BUCKET = 'run-images';
@@ -170,19 +223,49 @@ export async function saveRace(r) {
     if (i >= 0) d.races[i] = merged; else d.races.push(merged);
     lsave(d); return merged;
   }
-  return chk(await sb.from('races').upsert(row).select().single());
+  return wchk(await sb.from('races').upsert(row).select().single());
 }
 export async function deleteRace(id) {
   if (!isCloud) { const d = lload(); d.races = d.races.filter(x => x.id !== id); lsave(d); return; }
-  chk(await sb.from('races').delete().eq('id', id));
+  wchk(await sb.from('races').delete().eq('id', id));
 }
 
 /* ---------- backup ---------- */
 export async function exportAll() {
-  return { exported_at: new Date().toISOString(), races: await listRaces(), shoes: await listShoes(), workouts: await listWorkouts() };
+  return { exported_at: new Date().toISOString(), version: 2, races: await listRaces(), shoes: await listShoes(), workouts: await listWorkouts(), logs: await listLogs(), profile: await getSettings() };
+}
+/** 자동 백업: 하루 1회 스냅샷을 Storage(backups)에 저장, 최근 30개 유지 */
+export async function autoBackup(force = false) {
+  if (!isCloud) return null;
+  const st = await getSettings();
+  const last = st.last_backup_at ? new Date(st.last_backup_at) : null;
+  if (!force && last && Date.now() - last < 20 * 3600 * 1000) return last;
+  const user = await getUser();
+  const data = await exportAll();
+  const name = `${user.id}/backup-${new Date().toISOString().slice(0, 10)}.json`;
+  chk(await sb.storage.from('backups').upload(name, new Blob([JSON.stringify(data)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' }));
+  const now = new Date().toISOString();
+  await sb.from('settings').upsert({ user_id: user.id, last_backup_at: now });
+  const { data: files } = await sb.storage.from('backups').list(user.id, { sortBy: { column: 'name', order: 'desc' }, limit: 100 });
+  const old = (files || []).slice(30).map(f => `${user.id}/${f.name}`);
+  if (old.length) await sb.storage.from('backups').remove(old);
+  return new Date(now);
+}
+export async function listBackups() {
+  if (!isCloud) return [];
+  const user = await getUser();
+  const { data, error } = await sb.storage.from('backups').list(user.id, { sortBy: { column: 'name', order: 'desc' }, limit: 30 });
+  if (error) throw error;
+  return (data || []).map(f => ({ name: f.name, path: `${user.id}/${f.name}`, size: f.metadata?.size, updated: f.updated_at || f.created_at }));
+}
+export async function downloadBackup(path) {
+  const { data, error } = await sb.storage.from('backups').download(path);
+  if (error) throw error;
+  return JSON.parse(await data.text());
 }
 export async function importAll(data) {
   for (const r of data.races || []) await saveRace(r);
+  for (const l of data.logs || []) await saveLog(l);
   if (!data.races && data.settings?.race_date) {
     await saveRace({ name: data.settings.race_name || '목표 대회', date: data.settings.race_date, distance_km: 42.195, goal_time: data.settings.goal_time, priority: 'A' });
   }
