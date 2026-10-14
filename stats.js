@@ -88,12 +88,13 @@ export async function renderStats(root, { workouts, tab, range, today, onPickDat
     let firstMon = mondayOf(start < '1000' ? (runs[0]?.date || today) : start);
     const weeks = [];
     for (let m = firstMon; m <= endMon; m = addDays(m, 7)) weeks.push(m);
-    const rows = weeks.map(m => {
+    let rows = weeks.map(m => {
       const e = addDays(m, 6);
       const plan = workouts.filter(w => w.type !== 'rest' && w.date >= m && w.date <= e).reduce((s, w) => s + Number(w.planned_distance || 0), 0);
       const a = agg(runs.filter(w => w.date >= m && w.date <= e));
       return { m, plan, a, future: m > thisMon };
     });
+    while (rows.length > 1 && !rows[0].plan && !rows[0].a.n) rows.shift();
     note.textContent = '막대: 완료 거리(진한 색)와 계획 거리(연한 색) · 선: 평균 페이스(위로 갈수록 빠름)';
     await makeChart(c1, {
       data: {
@@ -119,7 +120,8 @@ export async function renderStats(root, { workouts, tab, range, today, onPickDat
     const firstM = start < '1000' ? monthOf(runs[0]?.date || today) : monthOf(start);
     const months = [];
     for (let m = firstM; m <= monthOf(today); m = addMonths(m, 1)) months.push(m);
-    const rows = months.map(m => ({ m, a: agg(runs.filter(w => monthOf(w.date) === m)) }));
+    let rows = months.map(m => ({ m, a: agg(runs.filter(w => monthOf(w.date) === m)) }));
+    while (rows.length > 1 && !rows[0].a.n) rows.shift();
     note.textContent = '막대: 월간 거리 · 선: 러닝 횟수';
     await makeChart(c1, {
       data: {

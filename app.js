@@ -262,10 +262,14 @@ function targetOptions(date, selectedId) {
 }
 function pickTarget(date, km) {
   const ws = byDate(date).filter(w => w.type !== 'rest');
+  // 같은 러닝이 이미 기록된 경우(거리 거의 같음) → 그 기록에 이미지 첨부
+  if (km) {
+    const same = ws.find(w => w.status === 'done' && w.actual_distance && Math.abs(Number(w.actual_distance) - km) <= Math.max(0.3, km * 0.03));
+    if (same) return same;
+  }
   const open = ws.filter(w => w.status !== 'done');
-  const pool = open.length ? open : [];
-  if (!pool.length) return null;
-  return pool.sort((a, b) => Math.abs((a.planned_distance || 0) - (km || 0)) - Math.abs((b.planned_distance || 0) - (km || 0)))[0];
+  if (!open.length) return null;
+  return open.sort((a, b) => Math.abs((a.planned_distance || 0) - (km || 0)) - Math.abs((b.planned_distance || 0) - (km || 0)))[0];
 }
 
 function openImportModal(file, target = null) {
