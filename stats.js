@@ -144,7 +144,7 @@ export async function renderStats(root, { workouts, tab, range, today, onPickDat
     const keys = Object.keys(TYPES).filter(k => k !== 'rest');
     const rows = keys.map(k => ({ k, t: TYPES[k], a: agg(inRange.filter(w => w.type === k)) })).filter(r => r.a.n);
     const total = rows.reduce((s, r) => s + r.a.km, 0);
-    note.textContent = '왼쪽: 훈련 종류별 거리 비중 · 오른쪽: 훈련 종류별 평균 페이스';
+    note.textContent = '왼쪽: 훈련 종류별 거리 비중 · 오른쪽: 훈련 종류별 평균 페이스 (막대가 짧을수록 빠름)';
     box2.classList.remove('hidden');
     if (rows.length) {
       await makeChart(c1, {
