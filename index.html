@@ -45,13 +45,17 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-view="calendar">캘린더</button>
       <button class="tab" data-view="shoes">러닝화</button>
-      <button class="tab" data-view="journal">일지·통계</button>
+      <button class="tab" data-view="journal">통계·일지</button>
       <button class="tab" data-view="settings">설정</button>
     </nav>
 
     <main>
       <!-- 캘린더 -->
       <section id="view-calendar" class="view">
+        <div class="action-bar">
+          <label class="btn primary">가민 이미지로 기록 입력<input type="file" id="garmin-input" accept="image/*" multiple hidden /></label>
+          <span class="muted">가민 기록 공유 이미지를 올리면 날짜·거리·시간·페이스·심박을 자동으로 읽어 기록해요 (여러 장 가능)</span>
+        </div>
         <div class="stats-row" id="month-stats"></div>
         <div class="cal-layout">
           <div class="card cal-card">
@@ -81,11 +85,27 @@
         <div id="shoe-history"></div>
       </section>
 
-      <!-- 일지/통계 -->
+      <!-- 통계/일지 -->
       <section id="view-journal" class="view hidden">
         <div class="card">
-          <h2>주간 훈련 요약</h2>
-          <div class="table-wrap"><table class="table" id="weekly-table"></table></div>
+          <div class="section-head wrap gap">
+            <h2>훈련 통계</h2>
+            <div class="row gap wrap">
+              <div class="seg-tabs" id="stat-tabs">
+                <button data-k="week" class="on">주간</button>
+                <button data-k="month">월간</button>
+                <button data-k="type">훈련별</button>
+              </div>
+              <select id="stat-range" style="width:auto"></select>
+            </div>
+          </div>
+          <div class="stats-row six" id="stat-summary"></div>
+          <div class="chart-row">
+            <div class="chart-box"><canvas id="stat-chart"></canvas></div>
+            <div class="chart-box hidden" id="stat-chart2-box"><canvas id="stat-chart2"></canvas></div>
+          </div>
+          <p class="muted chart-note" id="stat-note"></p>
+          <div class="table-wrap"><table class="table" id="stat-table"></table></div>
         </div>
         <div class="card">
           <h2>러닝 일지 (느낀 점)</h2>

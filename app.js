@@ -1,5 +1,7 @@
 import * as store from './store.js';
 import { DEFAULT_RACE } from './config.js';
+import { renderStats, RANGES } from './stats.js';
+import { recognizeGarmin, compressImage, guessType, garminSummary } from './garmin.js';
 import { TYPES, SHOE_PURPOSES, RACE_DISTANCES, PRIORITY, distLabel, racePace, taperPlan, trainingPaces, paceOf, fmtPace, toSec, fmtDuration } from './plan.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -13,6 +15,9 @@ const state = {
   selected: null, // 'YYYY-MM-DD'
   view: 'calendar',
   shoeFocus: null,
+  statTab: 'week',
+  statRange: { week: 'w12', month: 'm6', type: 'w12' },
+  importQueue: [],
 };
 
 /* ---------- 날짜 유틸 ---------- */
@@ -202,11 +207,166 @@ function workoutCard(w) {
     </form>`}
     ${isRest ? `<form class="rec-form"><label>메모<textarea name="memo" placeholder="회복 상태, 수면, 컨디션">${esc(w.memo ?? '')}</textarea></label>
       <div style="margin-top:8px"><button class="btn primary" type="submit">메모 저장</button></div></form>` : ''}
+    ${(w.images || []).length ? `<div class="w-images">${w.images.map((p, i) => `<button type="button" class="thumb" data-i="${i}" title="크게 보기"><img data-path="${esc(p)}" alt="러닝 기록 이미지"></button>`).join('')}</div>` : ''}
     <div class="w-actions">
       <button class="btn sm" data-act="edit">계획 수정</button>
+      <label class="btn sm">기록 이미지 추가<input type="file" accept="image/*" data-act="img" hidden></label>
       <button class="btn sm danger" data-act="del">삭제</button>
     </div>
   </div>`;
+}
+
+/* ---------- 이미지 ---------- */
+async function fillImages(root) {
+  for (const img of $$('img[data-path]', root)) {
+    if (img.src) continue;
+    try { img.src = await store.imageUrl(img.dataset.path); } catch (e) { img.alt = '이미지를 불러오지 못했어요'; }
+  }
+}
+async function openImageViewer(w, idx) {
+  const path = w.images[idx];
+  let url = ''; try { url = await store.imageUrl(path); } catch { }
+  openModal(`${korDate(w.date)} · ${w.title}`, `
+    <div class="viewer"><img src="${esc(url)}" alt="러닝 기록 이미지"></div>
+    <div class="row gap" style="margin-top:12px">
+      ${w.images.length > 1 ? `<button class="btn sm" id="iv-prev">‹ 이전</button><span class="muted">${idx + 1} / ${w.images.length}</span><button class="btn sm" id="iv-next">다음 ›</button>` : ''}
+      <a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener" style="margin-left:auto">원본 열기</a>
+      <button class="btn sm danger" id="iv-del">이미지 삭제</button>
+    </div>`, body => {
+    const n = w.images.length;
+    $('#iv-prev', body) && ($('#iv-prev', body).onclick = () => openImageViewer(w, (idx - 1 + n) % n));
+    $('#iv-next', body) && ($('#iv-next', body).onclick = () => openImageViewer(w, (idx + 1) % n));
+    $('#iv-del', body).onclick = async () => {
+      if (!confirm('이 이미지를 삭제할까요?')) return;
+      await guard(async () => {
+        await store.removeImage(path).catch(() => { });
+        await saveW({ ...w, images: w.images.filter((_, i) => i !== idx) });
+      }, '이미지를 삭제했어요');
+      closeModal();
+    };
+  }, true);
+}
+
+/* ---------- 가민 이미지로 기록 입력 ---------- */
+function enqueueImports(files, target = null) {
+  state.importQueue.push(...[...files].map(f => ({ file: f, target })));
+  if ($('#modal').classList.contains('hidden')) nextImport();
+}
+function nextImport() {
+  const job = state.importQueue.shift();
+  if (job) openImportModal(job.file, job.target);
+}
+function targetOptions(date, selectedId) {
+  const ws = byDate(date).filter(w => w.type !== 'rest');
+  return `<option value="">새 훈련으로 추가</option>` + ws.map(w => `<option value="${w.id}" ${w.id === selectedId ? 'selected' : ''}>기존: ${esc(w.title)}${w.planned_distance ? ` (${Number(w.planned_distance)}km)` : ''} · ${STATUS_LABEL[effStatus(w)]}</option>`).join('');
+}
+function pickTarget(date, km) {
+  const ws = byDate(date).filter(w => w.type !== 'rest');
+  const open = ws.filter(w => w.status !== 'done');
+  const pool = open.length ? open : [];
+  if (!pool.length) return null;
+  return pool.sort((a, b) => Math.abs((a.planned_distance || 0) - (km || 0)) - Math.abs((b.planned_distance || 0) - (km || 0)))[0];
+}
+
+function openImportModal(file, target = null) {
+  const url = URL.createObjectURL(file);
+  const remain = state.importQueue.length;
+  const today = todayIso();
+  openModal(`가민 이미지로 기록 입력${remain ? ` (남은 이미지 ${remain}장)` : ''}`, `
+    <div class="imp-grid">
+      <div class="imp-img"><img src="${url}" alt="업로드한 이미지"></div>
+      <div>
+        <div class="ocr-status" id="ocr-status"><span id="ocr-msg">이미지 읽는 중...</span><div class="bar"><i id="ocr-bar" style="width:3%"></i></div></div>
+        <form id="imp-form" class="form-grid">
+          <label>날짜<input type="date" name="date" value="${target?.date || today}" required></label>
+          <label>저장 위치<select name="target">${targetOptions(target?.date || today, target?.id)}</select></label>
+          <label>종류<select name="type">${Object.entries(TYPES).filter(([k]) => k !== 'rest').map(([k, t]) => `<option value="${k}" ${k === (target?.type || 'easy') ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+          <label>훈련 제목<input name="title" value="${esc(target?.title || '')}" placeholder="예: 이른아침 러닝"></label>
+          <label>거리 (km)<input type="number" step="0.01" min="0" name="distance" value="${target?.actual_distance ?? ''}" required></label>
+          <label>시간 (h:mm:ss)<input name="time" value="${esc(target?.actual_time || '')}" placeholder="0:49:44"></label>
+          <label>평균 심박<input type="number" name="avg_hr" value="${target?.avg_hr ?? ''}"></label>
+          <label>러닝화<select name="shoe_id">${shoeOptions(target?.shoe_id || '')}</select></label>
+          <div class="full pace-out" id="imp-pace"></div>
+          <label class="full">가민 상세 기록<textarea name="garmin" rows="4" placeholder="인식된 상세 기록 (심박·케이던스·날씨 등)"></textarea></label>
+          <label class="full">달리며 느낀 점 메모<textarea name="memo" rows="3" placeholder="컨디션, 페이스 느낌, 통증 여부 등">${esc(target?.memo || '')}</textarea></label>
+          <div class="full muted" style="font-size:12px">자동 인식 결과는 틀릴 수 있어요. 이미지와 비교해 확인한 뒤 저장하세요.</div>
+          <div class="full row gap wrap"><button class="btn primary" type="submit">기록 저장</button><button class="btn" type="button" id="imp-skip">${remain ? '건너뛰기' : '취소'}</button></div>
+          <details class="full"><summary class="muted" style="font-size:12px;cursor:pointer">인식된 원본 텍스트 보기</summary><pre id="ocr-text" class="ocr-text"></pre></details>
+        </form>
+      </div>
+    </div>`, body => {
+    const f = $('#imp-form', body);
+    let ocr = null;
+    const updPace = () => { const p = paceOf(f.distance.value, f.time.value); $('#imp-pace', body).innerHTML = p ? `평균 페이스: <b>${fmtPace(p)}/km</b>` : ''; };
+    f.distance.oninput = updPace; f.time.oninput = updPace;
+    f.date.onchange = () => {
+      const t = pickTarget(f.date.value, Number(f.distance.value));
+      f.target.innerHTML = targetOptions(f.date.value, t?.id);
+      applyTarget();
+    };
+    const applyTarget = () => {
+      const t = state.workouts.find(x => x.id === f.target.value);
+      if (t) { f.type.value = t.type === 'rest' ? 'easy' : t.type; if (!f.title.dataset.edited) f.title.value = t.title; }
+      else if (ocr) { f.type.value = guessType(ocr.title, Number(f.distance.value), paceOf(f.distance.value, f.time.value), toSec(paceRace()?.goal_time || '3:30:00') / 42.195); if (!f.title.dataset.edited) f.title.value = ocr.title || '러닝'; }
+    };
+    f.title.oninput = () => { f.title.dataset.edited = '1'; };
+    f.target.onchange = applyTarget;
+    $('#imp-skip', body).onclick = () => { URL.revokeObjectURL(url); closeModal(); };
+
+    recognizeGarmin(file, (msg, p) => {
+      $('#ocr-msg', body) && ($('#ocr-msg', body).textContent = msg + (p > 0 && p < 1 ? ` ${Math.round(p * 100)}%` : ''));
+      $('#ocr-bar', body) && ($('#ocr-bar', body).style.width = Math.max(3, Math.round(p * 100)) + '%');
+    }).then(r => {
+      ocr = r;
+      if (!$('#imp-form')) return;
+      $('#ocr-text', body).textContent = r.rawText;
+      const found = [r.date && '날짜', r.distance && '거리', r.time && '시간', r.avgHr && '심박'].filter(Boolean);
+      $('#ocr-msg', body).textContent = found.length ? `인식 완료: ${found.join('·')} 자동 입력됨. 확인 후 저장하세요.` : '자동 인식에 실패했어요. 직접 입력해 주세요.';
+      $('#ocr-status', body).classList.toggle('warn', found.length < 3);
+      if (r.date) f.date.value = r.date;
+      if (r.distance) f.distance.value = r.distance;
+      if (r.time) f.time.value = r.time;
+      if (r.avgHr) f.avg_hr.value = r.avgHr;
+      f.garmin.value = garminSummary(r);
+      if (!target) {
+        const t = pickTarget(f.date.value, r.distance);
+        f.target.innerHTML = targetOptions(f.date.value, t?.id);
+      }
+      applyTarget();
+      updPace();
+    }).catch(e => {
+      $('#ocr-msg', body) && ($('#ocr-msg', body).textContent = '자동 인식 실패: ' + e.message + ' (직접 입력 후 저장할 수 있어요)');
+      $('#ocr-status', body)?.classList.add('warn');
+    });
+
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const btn = $('button[type=submit]', f); btn.disabled = true; btn.textContent = '저장 중...';
+      try {
+        const existing = state.workouts.find(x => x.id === f.target.value);
+        const id = existing?.id || crypto.randomUUID();
+        const blob = await compressImage(file);
+        const path = await store.uploadImage(id, blob);
+        const g = f.garmin.value.trim();
+        const base = existing || { id, date: f.date.value, type: f.type.value, title: f.title.value.trim() || '러닝', planned_distance: Number(f.distance.value) || null, details: '' };
+        let details = base.details || '';
+        if (g) details = details.includes('[가민 기록]') ? details.replace(/\[가민 기록\][\s\S]*$/, g) : (details ? details + '\n\n' + g : g);
+        const saved = await saveW({
+          ...base, date: f.date.value, type: f.type.value, title: f.title.value.trim() || base.title,
+          status: 'done', actual_distance: f.distance.value, actual_time: f.time.value.trim(), avg_hr: f.avg_hr.value,
+          shoe_id: f.shoe_id.value || null, memo: f.memo.value.trim() || base.memo || null, details,
+          images: [...(base.images || []), path],
+        });
+        toast('기록과 이미지를 저장했어요');
+        URL.revokeObjectURL(url);
+        closeModal();
+        if (state.view === 'calendar') selectDate(saved.date);
+      } catch (err) {
+        console.error(err); toast('저장 실패: ' + (err.message || err));
+        btn.disabled = false; btn.textContent = '기록 저장';
+      }
+    };
+  }, true);
 }
 
 function renderDayPanel() {
@@ -222,6 +382,7 @@ function renderDayPanel() {
     <button class="btn" id="add-workout" style="width:100%">+ 이 날짜에 훈련 추가</button>
     ${!state.workouts.length && mainRace() ? `<div class="empty" style="margin-top:12px">아직 훈련 계획이 없어요.<br>대회 기준 3주 테이퍼링 계획을 넣어볼까요?<br><button class="btn primary" id="quick-plan" style="margin-top:10px">테이퍼링 계획 넣기</button></div>` : ''}`;
   $('#add-workout').onclick = () => openWorkoutModal({ date: ds, type: 'easy', status: 'planned' });
+  fillImages(panel);
   const qp = $('#quick-plan'); if (qp) qp.onclick = () => loadPlan(mainRace()?.id);
 
   $$('.workout', panel).forEach(card => {
@@ -256,8 +417,11 @@ function renderDayPanel() {
       await guard(() => saveW(patch), '저장했어요');
     });
     $('[data-act=edit]', card).onclick = () => openWorkoutModal(w);
+    $('[data-act=img]', card).onchange = e => { const fl = e.target.files; if (fl?.length) enqueueImports(fl, w); e.target.value = ''; };
+    $$('.thumb', card).forEach(b => b.onclick = () => openImageViewer(w, Number(b.dataset.i)));
     $('[data-act=del]', card).onclick = async () => {
       if (!confirm(`'${w.title}' 훈련을 삭제할까요?`)) return;
+      for (const p of w.images || []) await store.removeImage(p).catch(() => { });
       await guard(() => store.deleteWorkout(w.id), '삭제했어요');
       state.workouts = state.workouts.filter(x => x.id !== w.id);
       refresh();
@@ -275,13 +439,19 @@ async function saveW(w) {
 }
 
 /* ---------- 모달 ---------- */
-function openModal(title, html, onMount) {
+function openModal(title, html, onMount, wide = false) {
+  $('.modal').classList.toggle('wide', wide);
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = html;
   $('#modal').classList.remove('hidden');
   onMount?.($('#modal-body'));
 }
-function closeModal() { $('#modal').classList.add('hidden'); }
+function closeModal() {
+  const wasImport = !!$('#imp-form');
+  $('#modal').classList.add('hidden');
+  $('#modal-body').innerHTML = '';
+  if (wasImport && state.importQueue.length) setTimeout(nextImport, 50);
+}
 
 function openWorkoutModal(w) {
   const isNew = !w.id;
@@ -407,22 +577,13 @@ function openShoeModal(s = {}) {
 
 /* ---------- 일지 / 통계 ---------- */
 function renderJournal() {
-  const weeks = {};
-  for (const w of state.workouts) {
-    if (w.type === 'rest') continue;
-    const k = mondayOf(w.date);
-    weeks[k] ||= { plan: 0, done: 0, n: 0, d: 0, time: 0, dist: 0 };
-    const x = weeks[k];
-    x.plan += Number(w.planned_distance || 0); x.n++;
-    if (w.status === 'done') {
-      x.d++; const km = Number(w.actual_distance || w.planned_distance || 0); x.done += km;
-      const sec = toSec(w.actual_time); if (sec && w.actual_distance) { x.time += sec; x.dist += Number(w.actual_distance); }
-    }
-  }
-  const keys = Object.keys(weeks).sort().reverse();
-  $('#weekly-table').innerHTML = keys.length ? `<thead><tr><th>주 (월요일)</th><th>계획</th><th>완료</th><th>달성률</th><th>훈련 완료</th><th>평균 페이스</th><th>총 시간</th></tr></thead><tbody>
-    ${keys.map(k => { const x = weeks[k]; return `<tr${k === mondayOf(todayIso()) ? ' style="background:#eff6ff"' : ''}><td>${k.slice(5).replace('-', '/')}~</td><td>${x.plan.toFixed(1)}km</td><td><b>${x.done.toFixed(1)}km</b></td><td>${x.plan ? Math.round(x.done / x.plan * 100) : 0}%</td><td>${x.d}/${x.n}회</td><td>${x.dist ? fmtPace(x.time / x.dist) : '-'}</td><td>${x.time ? fmtDuration(x.time) : '-'}</td></tr>`; }).join('')}</tbody>`
-    : '<tbody><tr><td class="empty">훈련 데이터가 없어요</td></tr></tbody>';
+  const tab = state.statTab, range = state.statRange[tab];
+  $$('#stat-tabs button').forEach(b => b.classList.toggle('on', b.dataset.k === tab));
+  $('#stat-range').innerHTML = Object.entries(RANGES).map(([k, v]) => `<option value="${k}" ${k === range ? 'selected' : ''}>${v}</option>`).join('');
+  renderStats($('#view-journal'), {
+    workouts: state.workouts, tab, range, today: todayIso(),
+    onPickDate: d => { switchView('calendar'); selectDate(d < todayIso() ? d : todayIso(), true); },
+  }).catch(e => { console.error(e); $('#stat-note').textContent = '그래프를 불러오지 못했어요: ' + e.message; });
 
   const entries = state.workouts.filter(w => w.memo).sort((a, b) => b.date.localeCompare(a.date));
   $('#journal-list').innerHTML = entries.length ? entries.map(w => {
@@ -584,6 +745,9 @@ function bindStatic() {
   $('#add-shoe').onclick = () => openShoeModal();
 
   $('#add-race').onclick = () => openRaceModal();
+  $('#garmin-input').onchange = e => { const fl = e.target.files; if (fl?.length) enqueueImports(fl); e.target.value = ''; };
+  $$('#stat-tabs button').forEach(b => b.onclick = () => { state.statTab = b.dataset.k; renderJournal(); });
+  $('#stat-range').onchange = e => { state.statRange[state.statTab] = e.target.value; renderJournal(); };
   $('#load-plan').onclick = () => loadPlan($('#plan-race').value);
   $('#export-btn').onclick = async () => {
     const data = await store.exportAll();

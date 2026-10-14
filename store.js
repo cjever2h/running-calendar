@@ -5,7 +5,7 @@ export const isCloud = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 let sb = null;
 
 const W_FIELDS = ['id', 'date', 'type', 'title', 'planned_distance', 'target_pace', 'details', 'status',
-  'actual_distance', 'actual_time', 'avg_hr', 'rpe', 'memo', 'shoe_id'];
+  'actual_distance', 'actual_time', 'avg_hr', 'rpe', 'memo', 'shoe_id', 'images'];
 const S_FIELDS = ['id', 'brand', 'model', 'nickname', 'color', 'purpose', 'purchase_date', 'initial_km',
   'max_km', 'retired', 'notes'];
 const R_FIELDS = ['id', 'name', 'date', 'distance_km', 'goal_time', 'priority', 'location', 'notes'];
@@ -127,6 +127,34 @@ export async function saveSettings(s) {
   if (!isCloud) { const d = lload(); d.settings = row; lsave(d); return row; }
   const user = await getUser();
   return chk(await sb.from('settings').upsert({ user_id: user.id, ...row, updated_at: new Date().toISOString() }).select().single());
+}
+
+/* ---------- images (가민 기록 이미지) ---------- */
+const BUCKET = 'run-images';
+const urlCache = new Map();
+function blobToDataURL(blob) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+}
+export async function uploadImage(workoutId, blob) {
+  if (!isCloud) return blobToDataURL(blob);
+  const user = await getUser();
+  const path = `${user.id}/${workoutId}/${Date.now()}.jpg`;
+  chk(await sb.storage.from(BUCKET).upload(path, blob, { contentType: 'image/jpeg', upsert: false }));
+  return path;
+}
+export async function imageUrl(path) {
+  if (!path || path.startsWith('data:')) return path;
+  const c = urlCache.get(path);
+  if (c && c.exp > Date.now()) return c.url;
+  const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600);
+  if (error) throw error;
+  urlCache.set(path, { url: data.signedUrl, exp: Date.now() + 50 * 60 * 1000 });
+  return data.signedUrl;
+}
+export async function removeImage(path) {
+  if (!isCloud || !path || path.startsWith('data:')) return;
+  await sb.storage.from(BUCKET).remove([path]);
+  urlCache.delete(path);
 }
 
 /* ---------- races (목표 대회 여러 개) ---------- */

@@ -96,3 +96,20 @@ select s.user_id, coalesce(s.race_name, '목표 대회'), s.race_date, 42.195, s
 from public.settings s
 where s.race_date is not null
   and not exists (select 1 from public.races r where r.user_id = s.user_id and r.date = s.race_date);
+-- 러닝 기록 이미지 (가민 공유 이미지 등)
+alter table public.workouts add column if not exists images text[] not null default '{}';
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('run-images', 'run-images', false, 10485760, array['image/jpeg','image/png','image/webp'])
+on conflict (id) do nothing;
+drop policy if exists "run-images read own" on storage.objects;
+create policy "run-images read own" on storage.objects for select to authenticated
+  using (bucket_id = 'run-images' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "run-images insert own" on storage.objects;
+create policy "run-images insert own" on storage.objects for insert to authenticated
+  with check (bucket_id = 'run-images' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "run-images update own" on storage.objects;
+create policy "run-images update own" on storage.objects for update to authenticated
+  using (bucket_id = 'run-images' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "run-images delete own" on storage.objects;
+create policy "run-images delete own" on storage.objects for delete to authenticated
+  using (bucket_id = 'run-images' and (storage.foldername(name))[1] = auth.uid()::text);
