@@ -336,7 +336,8 @@ function openImportModal(file, target = null) {
       $('#ocr-text', body).textContent = r.rawText;
       const found = [r.date && '날짜', r.distance && '거리', r.time && '시간', r.avgHr && '심박'].filter(Boolean);
       $('#ocr-msg', body).textContent = found.length ? `인식 완료: ${found.join('·')} 자동 입력됨. 확인 후 저장하세요.` : '자동 인식에 실패했어요. 직접 입력해 주세요.';
-      $('#ocr-status', body).classList.toggle('warn', found.length < 3);
+      $('#ocr-status', body).classList.toggle('warn', found.length < 3 || r.distanceEstimated);
+      if (r.distanceEstimated) $('#ocr-msg', body).textContent += ' 거리는 글자를 못 읽어 시간÷페이스로 계산했어요. 꼭 확인하세요.';
       if (r.date) f.date.value = r.date;
       else if (!target) { f.date.value = ''; $('#ocr-msg', body).textContent += ' 날짜를 찾지 못했어요. 날짜를 직접 선택하세요.'; $('#ocr-status', body).classList.add('warn'); }
       if (r.distance) f.distance.value = r.distance;

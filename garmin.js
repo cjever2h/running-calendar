@@ -261,6 +261,29 @@ async function recognizeLines(worker, base, data, onStatus) {
   return out;
 }
 
+/** 가장 큰 글씨 줄(=메인 거리)을 적당한 크기로 줄여 다시 인식 */
+async function recognizeBigLine(worker, base, data) {
+  const ls = linesOf(data).filter(l => l.bbox && l.bbox.y0 < base.height * 0.6);
+  if (!ls.length) return '';
+  const big = ls.reduce((a, b) => (b.bbox.y1 - b.bbox.y0) > (a.bbox.y1 - a.bbox.y0) ? b : a);
+  const { y0, y1 } = big.bbox; const h = y1 - y0; const padY = Math.round(h * 0.25);
+  const sy = Math.max(0, y0 - padY), sh = Math.min(base.height - sy, h + padY * 2);
+  const k = Math.min(2, Math.max(0.3, 64 / h));
+  const c = document.createElement('canvas'); c.width = Math.round(base.width * k); c.height = Math.round(sh * k);
+  const g = c.getContext('2d', { willReadFrequently: true }); g.imageSmoothingQuality = 'high';
+  g.drawImage(base, 0, sy, base.width, sh, 0, 0, c.width, c.height);
+  const d = g.getImageData(0, 0, c.width, c.height); const p = d.data;
+  let mn = 255, mx = 0, sum = 0;
+  for (let j = 0; j < p.length; j += 4) { const v = p[j]; sum += v; if (v < mn) mn = v; if (v > mx) mx = v; }
+  const inv = sum / (p.length / 4) < 128, rng = Math.max(1, mx - mn);
+  for (let j = 0; j < p.length; j += 4) { let v = (p[j] - mn) * 255 / rng; if (inv) v = 255 - v; v = v < 170 ? 0 : 255; p[j] = p[j + 1] = p[j + 2] = v; }
+  g.putImageData(d, 0, 0);
+  await worker.setParameters({ tessedit_pageseg_mode: '7' });
+  try { return (await worker.recognize(c)).data.text; }
+  finally { await worker.setParameters({ tessedit_pageseg_mode: '6' }); }
+}
+const secOf = s => { if (!s) return null; const p = String(s).split(':').map(Number); if (p.some(isNaN)) return null; return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1]; };
+
 function score(r) { return ['date', 'distance', 'time', 'pace', 'avgHr'].filter(k => r[k] != null).length; }
 
 /** 이미지 1장 인식. onStatus(문구, 진행률0~1) */
@@ -296,6 +319,22 @@ export async function recognizeGarmin(file, onStatus = () => {}) {
         break;
       }
     }
+  }
+  // 거리 검증: 시간 ÷ 평균 페이스로 계산한 값과 비교해 가장 가까운 후보 선택
+  const est = secOf(best.time) && secOf(best.pace) ? secOf(best.time) / secOf(best.pace) : null;
+  const near = v => est && v && Math.abs(v - est) / est <= 0.02;
+  if (!near(best.distance)) {
+    onStatus('거리 다시 확인 중', 0.5);
+    let bigText = '';
+    try { bigText = await recognizeBigLine(worker, base, a.data); } catch { }
+    text += '\n----- (큰 글씨) -----\n' + bigText;
+    const cands = [...(text).matchAll(/(\d{1,3})\s?[.,]\s?(\d{2})(?!\d)/g)].map(m => parseFloat(`${m[1]}.${m[2]}`)).filter(v => v > 0.2 && v < 200);
+    const bigC = [...bigText.matchAll(/(\d{1,3})\s?[.,]\s?(\d{2})(?!\d)/g)].map(m => parseFloat(`${m[1]}.${m[2]}`));
+    if (est) {
+      const hit = [...bigC, ...cands].filter(near).sort((x, y) => Math.abs(x - est) - Math.abs(y - est))[0];
+      if (hit) best.distance = hit;
+      else { best.distance = Math.round(est * 100) / 100; best.distanceEstimated = true; }
+    } else if (!best.distance && bigC.length) best.distance = bigC[0];
   }
   onStatus('완료', 1);
   return { ...best, rawText: text };
