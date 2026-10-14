@@ -209,7 +209,7 @@ async function recognizeLines(worker, base, data, onStatus) {
       let mn = 255, mx = 0, sum = 0;
       for (let j = 0; j < p.length; j += 4) { const v = p[j]; sum += v; if (v < mn) mn = v; if (v > mx) mx = v; }
       const inv = sum / (p.length / 4) < 128, rng = Math.max(1, mx - mn);
-      for (let j = 0; j < p.length; j += 4) { let v = (p[j] - mn) * 255 / rng; if (inv) v = 255 - v; p[j] = p[j + 1] = p[j + 2] = v; }
+      for (let j = 0; j < p.length; j += 4) { let v = (p[j] - mn) * 255 / rng; if (inv) v = 255 - v; v = v < 205 ? 0 : 255; p[j] = p[j + 1] = p[j + 2] = v; }
       g.putImageData(d, 0, 0);
       const r = await worker.recognize(c);
       out.push(r.data.text.trim());
