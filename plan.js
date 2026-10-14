@@ -50,7 +50,8 @@ export function fmtPace(secPerKm) {
 }
 export function fmtDuration(sec) {
   if (!sec) return '-';
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.round(sec % 60);
+  const t = Math.round(sec);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 export function paceOf(distKm, timeStr) {

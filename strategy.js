@@ -41,12 +41,17 @@ export function fuelPlan(distKm, goalSec, opts) {
   const gelEvery = Number(opts.gelEveryMin) || 40;
   const water = (opts.waterKm || '').split(/[,\s]+/).map(Number).filter(v => v > 0 && v < distKm).sort((a, b) => a - b);
   const ev = [{ km: 0, t: -15 * 60, what: `출발 15분 전: 젤 1개 + 물 2~3모금` }];
-  for (let t = gelEvery * 60; t < goalSec - 15 * 60; t += gelEvery * 60) {
-    const km = t / pace;
-    const near = water.find(w => w >= km - 0.5) ?? null;
-    ev.push({ km: near && near - km < 3 ? near : km, t: near && near - km < 3 ? near * pace : t, what: `젤 섭취${near && near - km < 3 ? ' (급수대에서 물과 함께)' : ' + 물'}`, gel: true });
-  }
-  for (const w of water) if (!ev.some(e => Math.abs(e.km - w) < 0.3)) ev.push({ km: w, t: w * pace, what: '급수: 물 또는 스포츠음료 몇 모금' });
+  // 직전 젤 시각 + 간격을 목표로, ±2.2km 안의 급수대가 있으면 급수대에서 섭취
+  let last = 0;
+  while (last + gelEvery * 60 < goalSec - 20 * 60) {
+    const ideal = last + gelEvery * 60, km = ideal / pace;
+    const near = water.reduce((b, w) => Math.abs(w - km) < Math.abs((b ?? 1e9) - km) ? w : b, null);
+    const snap = near != null && Math.abs(near - km) <= 2.2 && near * pace > last + gelEvery * 45;
+    const t = snap ? near * pace : ideal;
+    if (t > goalSec - 20 * 60) break;
+    ev.push({ km: snap ? near : km, t, what: `젤 섭취${snap ? ' (급수대에서 물과 함께)' : ' + 물'}`, gel: true });
+    last = t;
+  }  for (const w of water) if (!ev.some(e => Math.abs(e.km - w) < 0.3)) ev.push({ km: w, t: w * pace, what: '급수: 물 또는 스포츠음료 몇 모금' });
   ev.sort((a, b) => a.t - b.t);
   const gels = ev.filter(e => e.gel).length + 1;
   const carbPerHour = Math.round((gels * 22) / (goalSec / 3600));

@@ -980,7 +980,7 @@ function openPlanModal(r) {
         const ch = prevSum ? Math.round((sum - prevSum) / prevSum * 100) : null;
         const longR = w.items.find(x => x.type === 'long') || w.items.find(x => x.type === 'race');
         const key = w.items.filter(x => ['interval', 'tempo', 'mp', 'hill'].includes(x.type)).map(x => x.title).join(', ');
-        return `<tr><td>${w.idx}주</td><td>${w.mon.slice(5).replace('-', '/')}~</td><td><span class="badge" style="--c:${PHASES[w.phase].color}">${PHASES[w.phase].label} ${w.pw}</span>${w.isRec ? ' <span class="tag">회복주</span>' : ''}</td><td><b>${sum.toFixed(1)}km</b></td><td>${ch == null ? '-' : `<span class="${ch > 10 ? 'pv fast' : ''}">${ch > 0 ? '+' : ''}${ch}%</span>`}</td><td>${longR ? esc(longR.title) : '-'}</td><td style="white-space:normal;min-width:180px">${esc(key || '-')}</td></tr>`;
+        return `<tr><td>${w.idx}주</td><td>${w.mon.slice(5).replace('-', '/')}~</td><td><span class="badge" style="--c:${PHASES[w.phase].color}">${PHASES[w.phase].label} ${w.pw}</span>${w.isRec ? ' <span class="tag">회복주</span>' : ''}</td><td><b>${sum.toFixed(1)}km</b></td><td>${ch == null ? '-' : k && inc[k - 1].items.some(x => /대회 후 회복/.test(x.title)) ? `<span class="muted">대회 회복 후 복귀</span>` : `<span class="${ch > 10 ? 'pv fast' : ''}">${ch > 0 ? '+' : ''}${ch}%</span>`}</td><td>${longR ? esc(longR.title) : '-'}</td><td style="white-space:normal;min-width:180px">${esc(key || '-')}</td></tr>`;
       }).join('');
       const sp = res.split;
       $('#pl-out', body).innerHTML = `
@@ -1082,7 +1082,7 @@ function renderSettings() {
   $('#notify-state').textContent = p.notify_enabled ? '켜짐' : '꺼짐';
   $('#notify-btn').textContent = p.notify_enabled ? '알림 끄기' : '알림 켜기';
   $('#mode-line').innerHTML = store.isCloud
-    ? `<b>자동 저장 켜짐</b> · 모든 변경은 즉시 클라우드(Supabase)에 저장돼요 · 로그인: ${esc(state.userEmail || '')}<br>마지막 저장: ${fmtWhen(store.lastSync())} · 마지막 자동 백업: ${fmtWhen(p.last_backup_at)} (하루 1회, 최근 30개 보관)`
+    ? `<b>자동 저장 켜짐</b> · 모든 변경은 즉시 클라우드(Supabase)에 저장돼요 · 로그인: ${esc(state.userEmail || '')}<br>마지막 저장: ${fmtWhen(store.lastSync() || state.workouts.map(w => w.updated_at || w.created_at).filter(Boolean).sort().pop())} · 마지막 자동 백업: ${fmtWhen(p.last_backup_at)} (하루 1회, 최근 30개 보관)`
     : '로컬 모드 · 이 브라우저에만 저장됩니다. 백업을 자주 받아두세요.';
   $('#logout-btn').classList.toggle('hidden', !store.isCloud);
   renderBackups();
