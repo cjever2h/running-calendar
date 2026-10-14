@@ -187,6 +187,41 @@ export function parseGarmin(raw) {
   return r;
 }
 
+function linesOf(data) {
+  if (data.lines?.length) return data.lines;
+  return (data.blocks || []).flatMap(b => (b.paragraphs || []).flatMap(p => p.lines || []));
+}
+/** 상단 줄들을 개별 인식 (작은 글씨/어두운 배경 대응) */
+async function recognizeLines(worker, base, data, onStatus) {
+  const lines = linesOf(data).filter(l => l.bbox && l.bbox.y1 - l.bbox.y0 > 6)
+    .sort((x, y) => x.bbox.y0 - y.bbox.y0).filter(l => l.bbox.y0 < base.height * 0.5).slice(0, 14);
+  const out = [];
+  await worker.setParameters({ tessedit_pageseg_mode: '7' });
+  try {
+    for (let i = 0; i < lines.length; i++) {
+      const { x0, y0, x1, y1 } = lines[i].bbox; const padY = Math.round((y1 - y0) * 0.35);
+      const sx = 0, sy = Math.max(0, y0 - padY), sw = base.width, sh = Math.min(base.height - sy, y1 - y0 + padY * 2);
+      const k = Math.min(3, Math.max(1.5, 90 / (y1 - y0)));
+      const c = document.createElement('canvas'); c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+      const g = c.getContext('2d', { willReadFrequently: true }); g.imageSmoothingQuality = 'high';
+      g.drawImage(base, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      const d = g.getImageData(0, 0, c.width, c.height); const p = d.data;
+      let mn = 255, mx = 0, sum = 0;
+      for (let j = 0; j < p.length; j += 4) { const v = p[j]; sum += v; if (v < mn) mn = v; if (v > mx) mx = v; }
+      const inv = sum / (p.length / 4) < 128, rng = Math.max(1, mx - mn);
+      for (let j = 0; j < p.length; j += 4) { let v = (p[j] - mn) * 255 / rng; if (inv) v = 255 - v; p[j] = p[j + 1] = p[j + 2] = v; }
+      g.putImageData(d, 0, 0);
+      const r = await worker.recognize(c);
+      out.push(r.data.text.trim());
+      onStatus('날짜 다시 찾는 중', (i + 1) / lines.length);
+      if (/20\d{2}\s*[\/.\-]\s*\d{1,2}\s*[\/.\-]\s*\d{1,2}/.test(r.data.text)) break;
+    }
+  } finally {
+    await worker.setParameters({ tessedit_pageseg_mode: '6' }); // tesseract.js 기본값(SINGLE_BLOCK)으로 복원
+  }
+  return out;
+}
+
 function score(r) { return ['date', 'distance', 'time', 'pace', 'avgHr'].filter(k => r[k] != null).length; }
 
 /** 이미지 1장 인식. onStatus(문구, 진행률0~1) */
@@ -198,7 +233,8 @@ export async function recognizeGarmin(file, onStatus = () => {}) {
   };
   onStatus('인식 엔진 준비 중 (처음 한 번은 시간이 걸려요)', 0);
   const worker = await getWorker();
-  const a = await worker.recognize(ocrCanvas(img, false));
+  const base = ocrCanvas(img, false);
+  const a = await worker.recognize(base, {}, { text: true, blocks: true });
   let best = parseGarmin(a.data.text), text = a.data.text;
   if (score(best) < 4) {
     onStatus('어두운 배경 다시 인식 중', 0);
@@ -208,12 +244,19 @@ export async function recognizeGarmin(file, onStatus = () => {}) {
     best = { ...lo, ...hi };
     text += '\n----- (반전) -----\n' + b.data.text;
   }
-  if (!best.date || !best.distance || !best.time) {
-    onStatus('흐린 글자 다시 인식 중', 0);
-    const c = await worker.recognize(binarizeCanvas(ocrCanvas(img, false)));
-    const pc = parseGarmin(c.data.text);
-    for (const k of Object.keys(pc)) if (best[k] == null) best[k] = pc[k];
-    text += '\n----- (이진화) -----\n' + c.data.text;
+  if (!best.date) {
+    // 날짜를 못 찾으면: 상단 줄들을 한 줄씩 잘라 크게 키운 뒤 단일 줄 모드로 다시 인식
+    onStatus('날짜 다시 찾는 중', 0);
+    const lineTexts = await recognizeLines(worker, base, a.data, onStatus);
+    text += '\n----- (줄 단위) -----\n' + lineTexts.join('\n');
+    for (const lt of lineTexts) {
+      const pl = parseGarmin(lt);
+      if (pl.date) {
+        best.date = pl.date; if (pl.start) best.start = pl.start;
+        if (pl.title && /[가-힣A-Za-z]{2,}/.test(pl.title)) best.title = pl.title;
+        break;
+      }
+    }
   }
   onStatus('완료', 1);
   return { ...best, rawText: text };
