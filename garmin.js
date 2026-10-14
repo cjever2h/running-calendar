@@ -91,6 +91,24 @@ function binarizeCanvas(src) {
 }
 
 const pad = n => String(n).padStart(2, '0');
+const isoD = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+/** OCR 오인식 보정 날짜 추출: '2028/9124' → 2026-09-24 (미래 연도는 올해, '/'를 1로 읽은 경우 보정) */
+function fuzzyDate(t) {
+  const now = new Date(), cy = now.getFullYear(), today = isoD(now);
+  const m = t.match(/(20\d{2})\s*[\/.\-|]\s*([0-9lI|\/.\- ]{2,8})/);
+  if (!m) return null;
+  let y = +m[1]; if (y > cy || y < cy - 2) y = cy;
+  const s = m[2].trim().replace(/[lI|]/g, '1');
+  const cands = [];
+  const sep = s.match(/^(\d{1,2})\s*[\/.\-]\s*(\d{1,2})/);
+  if (sep) cands.push([+sep[1], +sep[2]]);
+  const dg = s.split(/\s+/)[0].replace(/[^\d]/g, '');
+  for (let i = 1; i < dg.length - 1; i++) if (dg[i] === '1') cands.push([+dg.slice(0, i), +dg.slice(i + 1, i + 3)]);
+  const ok = cands.filter(([mo, d]) => mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
+    .map(([mo, d]) => `${y}-${pad(mo)}-${pad(d)}`).filter(ds => ds <= today);
+  return ok.sort().pop() || null;
+}
 
 /** OCR 텍스트에서 러닝 정보 추출 */
 export function parseGarmin(raw) {
@@ -106,7 +124,8 @@ export function parseGarmin(raw) {
   const dm = t.match(/(20\d{2})\s*[\/.\-]\s*(\d{1,2})\s*[\/.\-]\s*(\d{1,2})/);
   if (dm) {
     const mo = +dm[2], da = +dm[3];
-    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) r.date = `${dm[1]}-${pad(mo)}-${pad(da)}`;
+    let yr = +dm[1]; const cy = new Date().getFullYear(); if (yr > cy || yr < cy - 2) yr = cy;
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) r.date = `${yr}-${pad(mo)}-${pad(da)}`;
     const endIdx = dm.index + dm[0].length;
     const after = t.slice(endIdx, endIdx + 24);
     const st = after.match(/(\d{1,2}:\d{2})(?!:)/);
@@ -119,6 +138,26 @@ export function parseGarmin(raw) {
     const ls = t.lastIndexOf('\n', dm.index) + 1;
     const before = t.slice(ls, dm.index).replace(/[^\p{L}\p{N}_:()\-\s.]/gu, ' ').replace(/\s+/g, ' ').trim();
     if (/[\p{L}]{2,}/u.test(before) && before.length >= 2) r.title = before;
+  }
+
+  if (!r.date) {
+    const fd = fuzzyDate(t);
+    if (fd) {
+      r.date = fd;
+      const fm = t.match(/(20\d{2})\s*[\/.\-|]\s*[0-9lI|\/.\- ]{2,8}/);
+      const ls = t.lastIndexOf('\n', fm.index) + 1;
+      const before = t.slice(ls, fm.index).replace(/[^\p{L}\p{N}_:()\-\s.]/gu, ' ').replace(/\s+/g, ' ').trim();
+      if (!r.title && /[\p{L}]{2,}/u.test(before)) r.title = before;
+      // 날짜 뒤 시작 시각(06:34 또는 0634)은 운동 시간으로 오인하지 않도록 제거
+      const endIdx = fm.index + fm[0].length;
+      const after = t.slice(endIdx, endIdx + 24);
+      const st = after.match(/(\d{1,2}):?(\d{2})(?![\d:])/);
+      if (st) {
+        r.start = `${pad(+st[1])}:${st[2]}`;
+        const cut = endIdx + after.indexOf(st[0]) + st[0].length;
+        rest = t.slice(0, fm.index) + ' ' + t.slice(cut);
+      } else rest = t.slice(0, fm.index) + ' ' + t.slice(endIdx);
+    }
   }
 
   // 거리 (첫 번째 km 값 = 활동 거리, '월간 거리'는 뒤에 나옴)
@@ -214,7 +253,7 @@ async function recognizeLines(worker, base, data, onStatus) {
       const r = await worker.recognize(c);
       out.push(r.data.text.trim());
       onStatus('날짜 다시 찾는 중', (i + 1) / lines.length);
-      if (/20\d{2}\s*[\/.\-]\s*\d{1,2}\s*[\/.\-]\s*\d{1,2}/.test(r.data.text)) break;
+      if (parseGarmin(r.data.text).date) break;
     }
   } finally {
     await worker.setParameters({ tessedit_pageseg_mode: '6' }); // tesseract.js 기본값(SINGLE_BLOCK)으로 복원
