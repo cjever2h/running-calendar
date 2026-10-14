@@ -315,8 +315,10 @@ function openImportModal(file, target = null) {
         const gm = (t.details || '').match(/\[가민 기록\][\s\S]*$/);
         f.garmin.value = gm ? gm[0] : (ocr ? garminSummary(ocr) : f.garmin.value);
         if (t.status === 'done') {
-          if (!f.avg_hr.value && t.avg_hr) f.avg_hr.value = t.avg_hr;
-          if (!f.time.value && t.actual_time) f.time.value = t.actual_time;
+          // 이미 기록된 러닝에 이미지를 붙이는 경우: 저장된 값을 우선 (인식 오차로 덮어쓰지 않음)
+          if (t.actual_distance) f.distance.value = t.actual_distance;
+          if (t.actual_time) f.time.value = t.actual_time;
+          if (t.avg_hr) f.avg_hr.value = t.avg_hr;
           if (t.shoe_id && !f.shoe_id.value) f.shoe_id.value = t.shoe_id;
           if (t.memo && !f.memo.value) f.memo.value = t.memo;
         }
