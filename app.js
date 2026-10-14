@@ -260,13 +260,12 @@ function targetOptions(date, selectedId) {
   const ws = date ? byDate(date).filter(w => w.type !== 'rest') : [];
   return `<option value="">새 훈련으로 추가</option>` + ws.map(w => `<option value="${w.id}" ${w.id === selectedId ? 'selected' : ''}>기존: ${esc(w.title)}${w.planned_distance ? ` (${Number(w.planned_distance)}km)` : ''} · ${STATUS_LABEL[effStatus(w)]}</option>`).join('');
 }
-function pickTarget(date, km) {
+function pickTarget(date, km, time = '') {
   const ws = byDate(date).filter(w => w.type !== 'rest');
   // 같은 러닝이 이미 기록된 경우(거리 거의 같음) → 그 기록에 이미지 첨부
-  if (km) {
-    const same = ws.find(w => w.status === 'done' && w.actual_distance && Math.abs(Number(w.actual_distance) - km) <= Math.max(0.3, km * 0.03));
-    if (same) return same;
-  }
+  const tsec = toSec(time);
+  const same = ws.find(w => w.status === 'done' && ((km && w.actual_distance && Math.abs(Number(w.actual_distance) - km) <= Math.max(0.3, km * 0.03)) || (tsec && toSec(w.actual_time) === tsec)));
+  if (same) return same;
   const open = ws.filter(w => w.status !== 'done');
   if (!open.length) return null;
   return open.sort((a, b) => Math.abs((a.planned_distance || 0) - (km || 0)) - Math.abs((b.planned_distance || 0) - (km || 0)))[0];
@@ -304,7 +303,7 @@ function openImportModal(file, target = null) {
     const updPace = () => { const p = paceOf(f.distance.value, f.time.value); $('#imp-pace', body).innerHTML = p ? `평균 페이스: <b>${fmtPace(p)}/km</b>` : ''; };
     f.distance.oninput = updPace; f.time.oninput = updPace;
     f.date.onchange = () => {
-      const t = pickTarget(f.date.value, Number(f.distance.value));
+      const t = pickTarget(f.date.value, Number(f.distance.value), f.time.value);
       f.target.innerHTML = targetOptions(f.date.value, t?.id);
       applyTarget();
     };
@@ -347,7 +346,7 @@ function openImportModal(file, target = null) {
       if (r.avgHr) f.avg_hr.value = r.avgHr;
       f.garmin.value = garminSummary(r);
       if (!target) {
-        const t = pickTarget(f.date.value, r.distance);
+        const t = pickTarget(f.date.value, r.distance, r.time);
         f.target.innerHTML = targetOptions(f.date.value, t?.id);
       }
       applyTarget();
