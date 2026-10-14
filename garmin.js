@@ -63,6 +63,33 @@ function ocrCanvas(img, invert = false) {
   return c;
 }
 
+/** 지역 대비 이진화: 주변 평균과 차이가 큰 픽셀(글자)을 검정, 나머지는 흰색
+ *  → 어두운 배경의 회색 글자도 흰 배경의 검은 글자로 변환 */
+function binarizeCanvas(src) {
+  const w = src.width, h = src.height;
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const d = src.getContext('2d').getImageData(0, 0, w, h); const p = d.data;
+  const W1 = w + 1; const integ = new Float64Array(W1 * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    for (let x = 0; x < w; x++) { row += p[(y * w + x) * 4]; integ[(y + 1) * W1 + x + 1] = integ[y * W1 + x + 1] + row; }
+  }
+  const r = Math.max(8, Math.round(w / 90));
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+      const sum = integ[y1 * W1 + x1] - integ[y0 * W1 + x1] - integ[y1 * W1 + x0] + integ[y0 * W1 + x0];
+      const mean = sum / ((y1 - y0) * (x1 - x0));
+      const i = (y * w + x) * 4;
+      const v = Math.abs(p[i] - mean) > 22 ? 0 : 255;
+      p[i] = p[i + 1] = p[i + 2] = v; p[i + 3] = 255;
+    }
+  }
+  out.getContext('2d').putImageData(d, 0, 0);
+  return out;
+}
+
 const pad = n => String(n).padStart(2, '0');
 
 /** OCR 텍스트에서 러닝 정보 추출 */
@@ -180,6 +207,13 @@ export async function recognizeGarmin(file, onStatus = () => {}) {
     const [hi, lo] = score(pb) > score(best) ? [pb, best] : [best, pb];
     best = { ...lo, ...hi };
     text += '\n----- (반전) -----\n' + b.data.text;
+  }
+  if (!best.date || !best.distance || !best.time) {
+    onStatus('흐린 글자 다시 인식 중', 0);
+    const c = await worker.recognize(binarizeCanvas(ocrCanvas(img, false)));
+    const pc = parseGarmin(c.data.text);
+    for (const k of Object.keys(pc)) if (best[k] == null) best[k] = pc[k];
+    text += '\n----- (이진화) -----\n' + c.data.text;
   }
   onStatus('완료', 1);
   return { ...best, rawText: text };
