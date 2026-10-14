@@ -106,22 +106,38 @@ export function parseGarmin(raw) {
   const pc = rest.match(/(\d{1,2})\s*'\s*(\d{2})/);
   if (pc) r.pace = `${+pc[1]}:${pc[2]}`;
 
+  // 라벨 바로 윗줄에 값이 있는 레이아웃(밝은 카드형): 라벨과 가장 가까운 열의 숫자
+  const lines = t.split('\n');
+  const valueAbove = (labelRe, numRe) => {
+    for (let i = 1; i < lines.length; i++) {
+      const m = lines[i].match(labelRe); if (!m) continue;
+      for (let j = i - 1; j >= Math.max(0, i - 2); j--) {
+        const c = [...lines[j].matchAll(numRe)];
+        if (!c.length) continue;
+        c.sort((a, b) => Math.abs(a.index - m.index) - Math.abs(b.index - m.index));
+        return +c[0][1];
+      }
+    }
+    return null;
+  };
+
   // 심박
   const hrs = [...rest.matchAll(/(\d{2,3})\s*bpm/gi)].map(m => +m[1]).filter(v => v >= 60 && v <= 220);
   if (hrs.length) { r.avgHr = hrs[0]; if (hrs[1] && hrs[1] > hrs[0]) r.maxHr = hrs[1]; }
   else {
-    const h2 = rest.match(/(\d{2,3})\s*(?:bpm)?\s*\n?\s*평균\s*심박/);
-    if (h2) r.avgHr = +h2[1];
+    const h = valueAbove(/평균\s*심박/, /(?<![\d:'.])(\d{2,3})(?![\d:'"])/g);
+    if (h >= 60 && h <= 220) r.avgHr = h;
   }
 
   // 케이던스
-  const cd = rest.match(/(\d{3})\s*spm/i) || rest.match(/(\d{3})\s*\n?\s*평균\s*케이던스/);
-  if (cd && +cd[1] > 120 && +cd[1] < 240) r.cadence = +cd[1];
+  const cd = rest.match(/(\d{3})\s*spm/i);
+  const cdv = cd ? +cd[1] : valueAbove(/케이던스/, /(?<![\d:'.])(\d{3})(?![\d:'"])/g);
+  if (cdv > 120 && cdv < 240) r.cadence = cdv;
 
   const el = rest.match(/(\d{1,4})\s*m\s*\n?\s*상승/); if (el) r.elevation = +el[1];
   const kc = rest.match(/([\d,]{2,6})\s*kcal/i); if (kc) r.kcal = kc[1];
   const ld = rest.match(/(\d{2,4})\s*\n?\s*운동\s*부하/); if (ld) r.load = +ld[1];
-  const tp = t.match(/(-?\d{1,2}(?:\.\d)?)\s*°\s*C?/); if (tp) r.temp = tp[1];
+  const tp = t.match(/(?:^|\s)(-?\d{1,2}(?:\.\d)?)\s*°/m) || t.match(/(\d{1,2}(?:\.\d)?)\s*°/); if (tp) r.temp = tp[1];
   const hu = t.match(/°\s*C?[^\n%]{0,8}?(\d{2,3})\s*%/); if (hu) r.humidity = hu[1];
   const ps = rest.match(/(\d{1,2}:\d{2}(?::\d{2})?)\s*\n?\s*일시\s*중지\s*포함/); if (ps && ps[1] !== r.time) r.timeWithPause = ps[1];
 
@@ -130,7 +146,8 @@ export function parseGarmin(raw) {
     const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
     const kw = /(LSD|lsd|템포|인터벌|조깅|리커버리|회복|트레일|러닝|마라톤|런|빌드업|페이스|MP|대회)/;
     const ln = lines.find(l => kw.test(l) && !/GARMIN|SPORTS|Forerunner|월간|평균|일시/i.test(l));
-    if (ln) r.title = ln.replace(/[^\p{L}\p{N}_:()\-\s.]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (ln) r.title = ln.replace(/[^\p{L}\p{N}_:()\-\s.]/gu, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/^[a-z](?=[A-Z가-힣])/, '').replace(/(\s+\S)+$/, m => m.trim().length <= 1 ? '' : m).trim().slice(0, 40);
   }
   return r;
 }

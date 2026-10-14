@@ -310,8 +310,18 @@ function openImportModal(file, target = null) {
     };
     const applyTarget = () => {
       const t = state.workouts.find(x => x.id === f.target.value);
-      if (t) { f.type.value = t.type === 'rest' ? 'easy' : t.type; if (!f.title.dataset.edited) f.title.value = t.title; }
-      else if (ocr) { f.type.value = guessType(ocr.title, Number(f.distance.value), paceOf(f.distance.value, f.time.value), toSec(paceRace()?.goal_time || '3:30:00') / 42.195); if (!f.title.dataset.edited) f.title.value = ocr.title || '러닝'; }
+      if (t) {
+        f.type.value = t.type === 'rest' ? 'easy' : t.type; if (!f.title.dataset.edited) f.title.value = t.title;
+        const gm = (t.details || '').match(/\[가민 기록\][\s\S]*$/);
+        f.garmin.value = gm ? gm[0] : (ocr ? garminSummary(ocr) : f.garmin.value);
+        if (t.status === 'done') {
+          if (!f.avg_hr.value && t.avg_hr) f.avg_hr.value = t.avg_hr;
+          if (!f.time.value && t.actual_time) f.time.value = t.actual_time;
+          if (t.shoe_id && !f.shoe_id.value) f.shoe_id.value = t.shoe_id;
+          if (t.memo && !f.memo.value) f.memo.value = t.memo;
+        }
+      } else if (ocr) f.garmin.value = garminSummary(ocr);
+      if (!t && ocr) { f.type.value = guessType(ocr.title, Number(f.distance.value), paceOf(f.distance.value, f.time.value), toSec(paceRace()?.goal_time || '3:30:00') / 42.195); if (!f.title.dataset.edited) f.title.value = ocr.title || '러닝'; }
     };
     f.title.oninput = () => { f.title.dataset.edited = '1'; };
     f.target.onchange = applyTarget;
