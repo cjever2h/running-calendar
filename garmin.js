@@ -46,7 +46,7 @@ export async function compressImage(file, maxW = 1080, quality = 0.85) {
 function ocrCanvas(img, invert = false) {
   const W = img.naturalWidth, H = img.naturalHeight;
   const cropH = Math.min(H, Math.round(W * 2.9));
-  const scale = Math.min(3, Math.max(1, 1200 / W));
+  const scale = Math.min(4, Math.max(1, (W < 700 ? 1600 : 1200) / W));
   const c = document.createElement('canvas');
   c.width = Math.round(W * scale); c.height = Math.round(cropH * scale);
   const g = c.getContext('2d', { willReadFrequently: true });
@@ -101,6 +101,14 @@ export function parseGarmin(raw) {
   // 운동 시간 (시작 시각을 제외한 첫 시간 값)
   const tm = rest.match(/(?<![\d:.])(\d{1,2}:\d{2}:\d{2}|\d{1,3}:\d{2})(?![\d:])/);
   if (tm) r.time = tm[1];
+
+  // 거리 보조: 운동 시간과 같은 줄 앞쪽의 소수 (예: "1 0.25   ⏱1:03:35")
+  if (!r.distance && tm) {
+    const ls = rest.lastIndexOf('\n', tm.index) + 1;
+    const before = rest.slice(ls, tm.index);
+    const dm2 = before.match(/(\d[\d ]{0,3}[.,] ?\d{2})(?!\d)/);
+    if (dm2) { const v = parseFloat(dm2[1].replace(/ /g, '').replace(',', '.')); if (v > 0.2 && v < 200) r.distance = v; }
+  }
 
   // 평균 페이스 6'12"
   const pc = rest.match(/(\d{1,2})\s*'\s*(\d{2})/);

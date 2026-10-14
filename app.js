@@ -257,7 +257,7 @@ function nextImport() {
   if (job) openImportModal(job.file, job.target);
 }
 function targetOptions(date, selectedId) {
-  const ws = byDate(date).filter(w => w.type !== 'rest');
+  const ws = date ? byDate(date).filter(w => w.type !== 'rest') : [];
   return `<option value="">새 훈련으로 추가</option>` + ws.map(w => `<option value="${w.id}" ${w.id === selectedId ? 'selected' : ''}>기존: ${esc(w.title)}${w.planned_distance ? ` (${Number(w.planned_distance)}km)` : ''} · ${STATUS_LABEL[effStatus(w)]}</option>`).join('');
 }
 function pickTarget(date, km) {
@@ -338,6 +338,7 @@ function openImportModal(file, target = null) {
       $('#ocr-msg', body).textContent = found.length ? `인식 완료: ${found.join('·')} 자동 입력됨. 확인 후 저장하세요.` : '자동 인식에 실패했어요. 직접 입력해 주세요.';
       $('#ocr-status', body).classList.toggle('warn', found.length < 3);
       if (r.date) f.date.value = r.date;
+      else if (!target) { f.date.value = ''; $('#ocr-msg', body).textContent += ' 날짜를 찾지 못했어요. 날짜를 직접 선택하세요.'; $('#ocr-status', body).classList.add('warn'); }
       if (r.distance) f.distance.value = r.distance;
       if (r.time) f.time.value = r.time;
       if (r.avgHr) f.avg_hr.value = r.avgHr;
