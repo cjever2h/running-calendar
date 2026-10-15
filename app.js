@@ -869,6 +869,7 @@ function garminRow(a, how) {
 }
 
 function openGarminImport(acts, gear, errs = []) {
+  acts = [...acts].sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start));
   const opts = { cross: true, recalc: true, races: true };
   const render = () => {
     const P = planGarminImport(acts, gear, opts);
