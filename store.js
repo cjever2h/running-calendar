@@ -6,13 +6,13 @@ let sb = null;
 
 const W_FIELDS = ['id', 'date', 'type', 'title', 'planned_distance', 'target_pace', 'details', 'status',
   'actual_distance', 'actual_time', 'avg_hr', 'rpe', 'memo', 'shoe_id', 'images',
-  'planned_duration', 'target_hr', 'phase', 'race_id', 'source', 'max_hr', 'cadence'];
+  'planned_duration', 'target_hr', 'phase', 'race_id', 'source', 'max_hr', 'cadence', 'garmin_id'];
 const S_FIELDS = ['id', 'brand', 'model', 'nickname', 'color', 'purpose', 'purchase_date', 'initial_km',
   'max_km', 'retired', 'notes'];
 const R_FIELDS = ['id', 'name', 'date', 'distance_km', 'goal_time', 'priority', 'location', 'notes', 'result_time', 'strategy'];
 const L_FIELDS = ['date', 'fatigue', 'sleep_hours', 'sleep_quality', 'pain_areas', 'pain_level', 'weight', 'resting_hr', 'note'];
 const P_FIELDS = ['birth_year', 'max_hr', 'resting_hr', 'weight', 'notify_enabled', 'notify_hour'];
-const NUMERIC = new Set(['planned_distance', 'actual_distance', 'avg_hr', 'rpe', 'initial_km', 'max_km', 'distance_km', 'max_hr', 'cadence',
+const NUMERIC = new Set(['garmin_id', 'planned_distance', 'actual_distance', 'avg_hr', 'rpe', 'initial_km', 'max_km', 'distance_km', 'max_hr', 'cadence',
   'fatigue', 'sleep_hours', 'sleep_quality', 'pain_level', 'weight', 'resting_hr', 'birth_year', 'notify_hour']);
 
 function clean(obj, fields) {

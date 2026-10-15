@@ -177,3 +177,7 @@ drop policy if exists "backups own all" on storage.objects;
 create policy "backups own all" on storage.objects for all to authenticated
   using (bucket_id = 'backups' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'backups' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- v3: 가민 활동 ID (중복 방지)
+alter table public.workouts add column if not exists garmin_id bigint;
+create unique index if not exists workouts_user_garmin_uidx on public.workouts (user_id, garmin_id) where garmin_id is not null;
