@@ -199,7 +199,7 @@ export async function renderStats(root, { workouts, logs = [], races = [], tab, 
     // 기록(PB)
     const pbFor = (D, label) => {
       const c = runs.filter(w => !['hill', 'recovery'].includes(w.type) && w.actual_time && Number(w.actual_distance) >= D * 0.99 && Number(w.actual_distance) <= D * 1.05)
-        .map(w => ({ t: toSec(w.actual_time) * D / Number(w.actual_distance), date: w.date, title: w.title, est: Number(w.actual_distance) > D * 1.01 }));
+        .map(w => { const dd = Number(w.actual_distance), raw = toSec(w.actual_time); return { t: dd >= D ? raw : raw * D / dd, date: w.date, title: w.title, est: dd < D, race: w.type === 'race' }; });
       for (const r of races) if (r.result_time && Math.abs(Number(r.distance_km) - D) < 0.2) c.push({ t: toSec(r.result_time), date: r.date, title: r.name, race: true });
       const b = c.filter(x => x.t).sort((a, b) => a.t - b.t)[0];
       return `<tr><td><b>${label}</b></td><td>${b ? `<b>${fmtDuration(b.t)}</b>${b.est ? ' <span class="muted">(환산)</span>' : ''}` : '-'}</td><td>${b ? fmtPace(b.t / D) + '/km' : '-'}</td><td>${b ? `${b.date} · ${esc(b.title)}${b.race ? ' <span class="tag pb">대회</span>' : ''}` : '<span class="muted">해당 거리 기록 없음</span>'}</td></tr>`;
@@ -210,7 +210,7 @@ export async function renderStats(root, { workouts, logs = [], races = [], tab, 
     const mo = {}; runs.forEach(w => { const m = monthOf(w.date); mo[m] = (mo[m] || 0) + kmOf(w); });
     const bestM = Object.entries(mo).sort((a, b) => b[1] - a[1])[0];
     const yrs = [...new Set(runs.map(w => w.date.slice(0, 4)))].sort().reverse();
-    note.textContent += ' · PB는 대회 결과와 해당 거리 훈련 중 최고 기록 (업힐·회복런 제외)';
+    note.textContent += ' · PB는 대회 결과와 해당 거리 이상 달린 훈련의 실제 기록 중 최고 (업힐·회복런 제외, 거리가 조금 모자라면 환산)';
     table.innerHTML = `<thead><tr><th>기록(PB)</th><th>기록</th><th>페이스</th><th>날짜·훈련</th></tr></thead><tbody>
       ${pbFor(5, '5km')}${pbFor(10, '10km')}${pbFor(21.0975, '하프')}${pbFor(42.195, '풀코스')}
       <tr><td><b>최장 거리</b></td><td><b>${longest ? kmOf(longest).toFixed(2) + 'km' : '-'}</b></td><td>${longest && paceOf2(longest) ? fmtPace(paceOf2(longest)) + '/km' : '-'}</td><td>${longest ? `${longest.date} · ${esc(longest.title)}` : '-'}</td></tr>
