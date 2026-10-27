@@ -77,7 +77,7 @@ export function buildMonthReport(month, { workouts = [], races = [], logs = [], 
   const hl = [];
   const longest = [...runs].sort((a, b) => kmOf(b) - kmOf(a))[0];
   for (const r of monthRaces) hl.push(`${r.name} ${r.dist} ${r.time} 완주${r.pb ? (r.firstTime ? ' (첫 기록)' : ` · 개인 최고 기록(PB) ${fmtDuration(-r.diffPb)} 단축`) : ''}${r.goalHit === true ? ' · 목표 달성' : ''}`);
-  if (longest) hl.push(`최장 거리 ${kmOf(longest).toFixed(1)}km (${+longest.date.slice(5, 7)}/${+longest.date.slice(8)}${longest.title ? ` ${longest.title}` : ''})`);
+  if (longest && longest.type !== 'race') hl.push(`최장 거리 ${kmOf(longest).toFixed(1)}km (${+longest.date.slice(5, 7)}/${+longest.date.slice(8)}${longest.title ? ` ${longest.title}` : ''})`);
   const long18 = runs.filter(w => kmOf(w) >= 18).length;
   if (long18) hl.push(`18km 이상 장거리 ${long18}회`);
   const bw = [...weeks].sort((a, b) => b.km - a.km)[0];
@@ -125,7 +125,7 @@ export function reportCardHTML(d, opts = {}) {
     const lv = !v ? 0 : v < 6 ? 1 : v < 11 ? 2 : v < 20 ? 3 : 4;
     cells.push(`<i class="rc-d l${lv}" title="${m}/${k} ${v ? v + 'km' : ''}">${k}</i>`);
   }
-  const room = Math.max(2, 6 - Math.max(0, d.races.length - 1) * 2 - (d.note ? Math.ceil(d.note.length / 45) + 1 : 0));
+  const room = Math.max(2, (d.races.length ? 5 : 6) - Math.max(0, d.races.length - 1) * 2 - (d.note ? Math.ceil(d.note.length / 45) + 1 : 0));
   const hl = (opts.highlights ?? d.highlights).slice(0, opts.maxHl ?? room);
   return `<div class="rc-card" id="${opts.id || 'report-card'}">
     <div class="rc-top">
