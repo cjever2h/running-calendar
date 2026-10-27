@@ -11,7 +11,7 @@ const S_FIELDS = ['id', 'brand', 'model', 'nickname', 'color', 'purpose', 'purch
   'max_km', 'retired', 'notes'];
 const R_FIELDS = ['id', 'name', 'date', 'distance_km', 'goal_time', 'priority', 'location', 'notes', 'result_time', 'strategy'];
 const L_FIELDS = ['date', 'fatigue', 'sleep_hours', 'sleep_quality', 'pain_areas', 'pain_level', 'weight', 'resting_hr', 'note'];
-const P_FIELDS = ['birth_year', 'max_hr', 'resting_hr', 'weight', 'notify_enabled', 'notify_hour'];
+const P_FIELDS = ['birth_year', 'max_hr', 'resting_hr', 'weight', 'notify_enabled', 'notify_hour', 'report_prefs'];
 const NUMERIC = new Set(['garmin_id', 'planned_distance', 'actual_distance', 'avg_hr', 'rpe', 'initial_km', 'max_km', 'distance_km', 'max_hr', 'cadence',
   'fatigue', 'sleep_hours', 'sleep_quality', 'pain_level', 'weight', 'resting_hr', 'birth_year', 'notify_hour']);
 
@@ -272,3 +272,16 @@ export async function importAll(data) {
   for (const s of data.shoes || []) await saveShoe(s);
   for (const w of data.workouts || []) await saveWorkout(w);
 }
+
+/* ---------- 월간 리포트 공유 ---------- */
+export async function shareReport(month, data) {
+  const user = await getUser();
+  const row = wchk(await sb.from('shared_reports').upsert({ user_id: user.id, month, data, updated_at: new Date().toISOString() }, { onConflict: 'user_id,month' }).select('id').single());
+  return row.id;
+}
+export async function getMySharedReport(month) {
+  if (!isCloud) return null;
+  const { data } = await sb.from('shared_reports').select('id, updated_at').eq('month', month).maybeSingle();
+  return data;
+}
+export async function unshareReport(month) { chk(await sb.from('shared_reports').delete().eq('month', month)); }

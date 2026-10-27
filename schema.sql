@@ -181,3 +181,25 @@ create policy "backups own all" on storage.objects for all to authenticated
 -- v3: 가민 활동 ID (중복 방지)
 alter table public.workouts add column if not exists garmin_id bigint;
 create unique index if not exists workouts_user_garmin_uidx on public.workouts (user_id, garmin_id) where garmin_id is not null;
+
+-- v4: 월간 리포트 공유
+alter table public.settings add column if not exists report_prefs jsonb not null default '{}'::jsonb;
+create table if not exists public.shared_reports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  month text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, month)
+);
+alter table public.shared_reports enable row level security;
+drop policy if exists "own shared_reports" on public.shared_reports;
+create policy "own shared_reports" on public.shared_reports for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+grant select, insert, update, delete on public.shared_reports to authenticated;
+create or replace function public.get_shared_report(rid uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select data || jsonb_build_object('shared_at', updated_at) from public.shared_reports where id = rid
+$$;
+revoke all on function public.get_shared_report(uuid) from public;
+grant execute on function public.get_shared_report(uuid) to anon, authenticated;

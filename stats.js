@@ -70,7 +70,7 @@ function summaryCards(a, label) {
 }
 
 /* ---------- 렌더 ---------- */
-export async function renderStats(root, { workouts, logs = [], races = [], tab, range, today, onPickDate }) {
+export async function renderStats(root, { workouts, logs = [], races = [], tab, range, today, onPickDate, onPickMonth }) {
   destroyCharts();
   const runs = doneRuns(workouts);
   const start = rangeStart(range, today);
@@ -144,8 +144,10 @@ export async function renderStats(root, { workouts, logs = [], races = [], tab, 
       },
     });
     table.innerHTML = `<thead><tr><th>월</th><th>거리</th><th>횟수</th><th>총 시간</th><th>평균 페이스</th><th>평균 심박</th><th>최장</th><th>18km+ 장거리</th></tr></thead><tbody>
-      ${[...rows].reverse().map(r => `<tr><td>${r.m.replace('-', '.')}</td><td><b>${r.a.km.toFixed(1)}km</b></td><td>${r.a.n}회</td><td>${r.a.sec ? fmtDuration(r.a.sec) : '-'}</td><td>${r.a.pace ? fmtPace(r.a.pace) : '-'}</td><td>${r.a.hr ?? '-'}</td><td>${r.a.longest ? r.a.longest.toFixed(1) + 'km' : '-'}</td><td>${r.a.long18}회</td></tr>`).join('')}</tbody>`;
+      ${[...rows].reverse().map(r => `<tr class="m-row" data-m="${r.m}" title="월간 리포트 보기"><td>${r.m.replace('-', '.')} <span class="tag">리포트</span></td><td><b>${r.a.km.toFixed(1)}km</b></td><td>${r.a.n}회</td><td>${r.a.sec ? fmtDuration(r.a.sec) : '-'}</td><td>${r.a.pace ? fmtPace(r.a.pace) : '-'}</td><td>${r.a.hr ?? '-'}</td><td>${r.a.longest ? r.a.longest.toFixed(1) + 'km' : '-'}</td><td>${r.a.long18}회</td></tr>`).join('')}</tbody>`;
   }
+
+  if (tab === 'month') root.querySelectorAll('tr.m-row').forEach(tr => tr.onclick = () => onPickMonth?.(tr.dataset.m));
 
   if (tab === 'type') {
     const keys = Object.keys(TYPES).filter(k => !NON_RUN.includes(k));

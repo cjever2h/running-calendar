@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>월간 러닝 리포트 | 런닝 캘린더</title>
+  <meta property="og:title" content="월간 러닝 리포트" />
+  <meta property="og:description" content="이번 달 러닝 거리·횟수·훈련 구성·대회 기록" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body { background: #020617; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px 12px; gap: 14px; }
+    .sh-wrap { width: 540px; max-width: 100%; }
+    .sh-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    .sh-msg { color: #cbd5e1; text-align: center; padding: 40px 10px; }
+    .sh-foot { color: #64748b; font-size: 12px; text-align: center; }
+    .sh-foot a { color: #94a3b8; }
+    @media (max-width: 560px) { .sh-wrap .rc-card { zoom: calc((100vw - 24px) / 540px); } }
+  </style>
+</head>
+<body>
+  <div class="sh-wrap" id="sh"><p class="sh-msg">리포트를 불러오는 중...</p></div>
+  <div class="sh-actions hidden" id="sh-actions">
+    <button class="btn primary" id="sh-img">이미지 저장</button>
+    <button class="btn" id="sh-copy">링크 복사</button>
+  </div>
+  <p class="sh-foot">런닝 캘린더 월간 리포트 · <a href="/">나도 훈련 기록하기</a></p>
+  <script type="module">
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+    import { reportCardHTML, cardToBlob } from './report.js';
+    const box = document.getElementById('sh');
+    const id = new URLSearchParams(location.search).get('id');
+    const fail = m => { box.innerHTML = `<p class="sh-msg">${m}</p>`; };
+    try {
+      if (!id || !/^[0-9a-f-]{36}$/i.test(id)) throw new Error('잘못된 링크예요.');
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_shared_report`, {
+        method: 'POST', headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rid: id }),
+      });
+      if (!res.ok) throw new Error('리포트를 불러오지 못했어요.');
+      const d = await res.json();
+      if (!d) throw new Error('공유가 중지되었거나 없는 리포트예요.');
+      document.title = `${d.name ? d.name + '의 ' : ''}${d.label} 러닝 리포트`;
+      box.innerHTML = reportCardHTML(d);
+      document.getElementById('sh-actions').classList.remove('hidden');
+      document.getElementById('sh-img').onclick = async () => {
+        const blob = await cardToBlob(document.getElementById('report-card'));
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `running-report-${d.month}.png`; a.click();
+      };
+      document.getElementById('sh-copy').onclick = async () => {
+        try { await navigator.clipboard.writeText(location.href); document.getElementById('sh-copy').textContent = '복사됨'; } catch { prompt('링크를 복사하세요', location.href); }
+      };
+    } catch (e) { fail(e.message); }
+  </script>
+</body>
+</html>

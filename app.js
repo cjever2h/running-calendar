@@ -1,6 +1,7 @@
 import * as store from './store.js';
 import { DEFAULT_RACE, VAPID_PUBLIC_KEY } from './config.js';
 import { renderStats, RANGES } from './stats.js';
+import { buildMonthReport, reportCardHTML, reportText, cardToBlob, addMonths } from './report.js';
 import { recognizeGarmin, compressImage, guessType, garminSummary } from './garmin.js';
 import { TYPES, SHOE_PURPOSES, RACE_DISTANCES, PRIORITY, distLabel, racePace, paceOf, fmtPace, toSec, fmtDuration } from './plan.js';
 import { paceZones, hrZones, zoneText, TYPE_ZONE } from './zones.js';
@@ -791,11 +792,17 @@ function openShoeModal(s = {}) {
 function renderJournal() {
   const tab = state.statTab, range = state.statRange[tab];
   $$('#stat-tabs button').forEach(b => b.classList.toggle('on', b.dataset.k === tab));
+  const isReport = tab === 'report';
+  $('#view-journal').classList.toggle('report-mode', isReport);
+  if (isReport) renderReport();
+  else {
   $('#stat-range').innerHTML = Object.entries(RANGES).map(([k, v]) => `<option value="${k}" ${k === range ? 'selected' : ''}>${v}</option>`).join('');
   renderStats($('#view-journal'), {
     workouts: state.workouts, logs: state.logs, races: state.races, tab, range, today: todayIso(),
     onPickDate: d => { switchView('calendar'); selectDate(d < todayIso() ? d : todayIso(), true); },
+    onPickMonth: m => { state.reportMonth = m; state.statTab = 'report'; renderJournal(); window.scrollTo({ top: 0, behavior: 'smooth' }); },
   }).catch(e => { console.error(e); $('#stat-note').textContent = '그래프를 불러오지 못했어요: ' + e.message; });
+  }
 
   const entries = state.workouts.filter(w => w.memo).sort((a, b) => b.date.localeCompare(a.date));
   $('#journal-list').innerHTML = entries.length ? entries.map(w => {
@@ -962,6 +969,110 @@ async function runGarminImport(P, opts) {
   } catch (e) {
     console.error(e); msg.className = 'msg err'; msg.textContent = '오류: ' + (e.message || e); btn.disabled = false;
   }
+}
+
+/* ---------- 월간 리포트 (공유용) ---------- */
+function reportPrefs() { return state.profile.report_prefs || {}; }
+let prefTimer = null;
+function saveReportPrefs(patch) {
+  const p = { ...reportPrefs(), ...patch };
+  state.profile = { ...state.profile, report_prefs: p };
+  clearTimeout(prefTimer);
+  prefTimer = setTimeout(() => store.saveProfile({ report_prefs: p }).catch(e => console.warn(e)), 600);
+}
+function monthPref(m) { return reportPrefs().months?.[m] || {}; }
+function setMonthPref(m, patch) { const months = { ...(reportPrefs().months || {}) }; months[m] = { ...(months[m] || {}), ...patch }; saveReportPrefs({ months }); }
+function currentReport() {
+  const m = state.reportMonth;
+  const mp = monthPref(m);
+  const d = buildMonthReport(m, { workouts: state.workouts, races: state.races, logs: state.logs, shoes: state.shoes, name: reportPrefs().name || '', note: mp.note || '', today: todayIso() });
+  const hidden = new Set(mp.hide || []);
+  d.allHighlights = d.highlights;
+  d.highlights = d.highlights.filter(h => !hidden.has(h.replace(/[\d.,:+%-]+/g, '#')));
+  return d;
+}
+const hlKey = h => h.replace(/[\d.,:+%-]+/g, '#'); // 숫자가 바뀌어도 같은 항목으로 인식
+
+function renderReport() {
+  const box = $('#report-view');
+  state.reportMonth ||= todayIso().slice(0, 7);
+  const m = state.reportMonth;
+  const d = currentReport();
+  const mp = monthPref(m);
+  const hidden = new Set(mp.hide || []);
+  box.innerHTML = `
+    <div class="rp-bar">
+      <button class="icon-btn" id="rp-prev" aria-label="이전 달">‹</button>
+      <b class="rp-month">${esc(d.label)}</b>
+      <button class="icon-btn" id="rp-next" aria-label="다음 달" ${m >= todayIso().slice(0, 7) ? 'disabled' : ''}>›</button>
+      <label class="rp-name">표시 이름<input id="rp-name" value="${esc(reportPrefs().name || '')}" placeholder="예: 네오" maxlength="20"></label>
+    </div>
+    <div class="rp-layout">
+      <div class="rp-preview"><div class="rp-scale">${reportCardHTML(d)}</div></div>
+      <div class="rp-side">
+        <div class="rp-actions">
+          <button class="btn primary" id="rp-img">이미지 저장</button>
+          <button class="btn" id="rp-share-img">이미지 공유</button>
+          <button class="btn" id="rp-link">공유 링크 만들기</button>
+          <button class="btn" id="rp-text">텍스트 복사</button>
+        </div>
+        <div id="rp-link-box" class="rp-link-box"></div>
+        <h3>특이사항 <span class="muted" style="font-size:12px;font-weight:500">체크한 항목만 카드에 보여요</span></h3>
+        ${d.allHighlights.length ? d.allHighlights.map(h => `<label class="ck"><input type="checkbox" class="rp-hl" data-k="${esc(hlKey(h))}" ${hidden.has(hlKey(h)) ? '' : 'checked'}><span>${esc(h)}</span></label>`).join('') : '<p class="muted">이 달에는 자동 특이사항이 없어요.</p>'}
+        <label style="margin-top:10px">직접 쓰는 특이사항·한 줄 소감<textarea id="rp-note" rows="4" maxlength="300" placeholder="예: JTBC 서울마라톤 앞두고 테이퍼링 시작. 발목 통증 관리하며 마무리!">${esc(mp.note || '')}</textarea></label>
+        <p class="muted" style="font-size:12px">이미지는 인스타그램 4:5 비율(1080×1350)로 저장돼요. 공유 링크는 로그인 없이 볼 수 있는 이 달의 요약 페이지예요 (메모·이미지·위치 같은 상세 기록은 포함되지 않아요).</p>
+      </div>
+    </div>`;
+  const rerender = () => { const sc = box.querySelector('.rp-scale'); sc.innerHTML = reportCardHTML(currentReport()); };
+  $('#rp-prev').onclick = () => { state.reportMonth = addMonths(m, -1); renderReport(); };
+  $('#rp-next').onclick = () => { state.reportMonth = addMonths(m, 1); renderReport(); };
+  $('#rp-name').oninput = e => { saveReportPrefs({ name: e.target.value.trim() }); rerender(); };
+  $('#rp-note').oninput = e => { setMonthPref(m, { note: e.target.value }); rerender(); };
+  $$('.rp-hl', box).forEach(cb => cb.onchange = () => {
+    const hide = $$('.rp-hl', box).filter(c => !c.checked).map(c => c.dataset.k);
+    setMonthPref(m, { hide }); rerender();
+  });
+  const fileName = () => `running-report-${m}.png`;
+  $('#rp-img').onclick = async () => {
+    await guard(async () => {
+      const blob = await cardToBlob($('#report-card'));
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fileName(); a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }, '이미지를 저장했어요');
+  };
+  $('#rp-share-img').onclick = async () => {
+    try {
+      const blob = await cardToBlob($('#report-card'));
+      const file = new File([blob], fileName(), { type: 'image/png' });
+      if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: `${d.label} 러닝 리포트`, text: reportText(currentReport()) });
+      else { toast('이 브라우저는 이미지 공유를 지원하지 않아 저장으로 대신할게요'); $('#rp-img').click(); }
+    } catch (e) { if (e.name !== 'AbortError') toast('공유 실패: ' + e.message); }
+  };
+  $('#rp-text').onclick = async () => {
+    const url = $('#rp-link-box').dataset.url;
+    try { await navigator.clipboard.writeText(reportText(currentReport(), { url })); toast('리포트 텍스트를 복사했어요'); }
+    catch { toast('복사하지 못했어요'); }
+  };
+  const showLink = (id, at) => {
+    const url = `${location.origin}/share.html?id=${id}`;
+    const lb = $('#rp-link-box'); lb.dataset.url = url;
+    lb.innerHTML = `<div class="alert today"><div style="word-break:break-all"><a href="${url}" target="_blank" rel="noopener">${url}</a></div>
+      <div class="row gap wrap" style="margin-top:8px"><button class="btn sm" id="rp-copy-link">링크 복사</button>${navigator.share ? '<button class="btn sm" id="rp-share-link">링크 공유</button>' : ''}<button class="btn sm danger" id="rp-unshare">공유 중지</button>
+      <span class="muted" style="font-size:12px">${at ? `마지막 업데이트 ${new Date(at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}</span></div></div>`;
+    $('#rp-link').textContent = '공유 링크 업데이트';
+    $('#rp-copy-link').onclick = async () => { try { await navigator.clipboard.writeText(url); toast('링크를 복사했어요'); } catch { toast(url); } };
+    $('#rp-share-link')?.addEventListener('click', () => navigator.share({ title: `${d.label} 러닝 리포트`, url }).catch(() => {}));
+    $('#rp-unshare').onclick = async () => {
+      if (!confirm('공유를 중지할까요? 이 링크로는 더 이상 볼 수 없어요.')) return;
+      await guard(() => store.unshareReport(m), '공유를 중지했어요'); renderReport();
+    };
+  };
+  $('#rp-link').onclick = async () => {
+    const data = currentReport(); delete data.allHighlights;
+    const id = await guard(() => store.shareReport(m, data), '공유 링크를 만들었어요');
+    showLink(id, new Date().toISOString());
+  };
+  store.getMySharedReport(m).then(r => { if (r && state.reportMonth === m) showLink(r.id, r.updated_at); }).catch(() => {});
 }
 
 /* ---------- 설정 ---------- */
