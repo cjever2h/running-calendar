@@ -40,10 +40,12 @@ export function buildMonthReport(month, { workouts = [], races = [], logs = [], 
   const runsAll = workouts.filter(w => w.status === 'done' && !NON_RUN.includes(w.type));
   const runs = runsAll.filter(w => w.date.startsWith(month)).sort((a, b) => a.date.localeCompare(b.date));
   const crossN = workouts.filter(w => w.status === 'done' && ['cross', 'strength'].includes(w.type) && w.date.startsWith(month)).length;
-  const A = agg(runs), P = agg(runsAll.filter(w => w.date.startsWith(addMonths(month, -1))));
-  const days = new Set(runs.map(w => w.date)).size;
   const [y, m] = month.split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
+  const partial = !!(today && today >= `${month}-01` && today < `${month}-${pad(daysInMonth)}`);
+  const pm = addMonths(month, -1), cutDay = partial ? +today.slice(8) : 31;
+  const A = agg(runs), P = agg(runsAll.filter(w => w.date.startsWith(pm) && +w.date.slice(8) <= cutDay));
+  const days = new Set(runs.map(w => w.date)).size;
   const ytd = runsAll.filter(w => w.date.startsWith(String(y)) && w.date <= `${month}-31`).reduce((s, w) => s + kmOf(w), 0);
 
   // 훈련 종류별
@@ -80,7 +82,7 @@ export function buildMonthReport(month, { workouts = [], races = [], logs = [], 
   if (long18) hl.push(`18km 이상 장거리 ${long18}회`);
   const bw = [...weeks].sort((a, b) => b.km - a.km)[0];
   if (bw && bw.km > 0) hl.push(`최다 주간 거리 ${bw.km.toFixed(1)}km (${+bw.mon.slice(5, 7)}/${+bw.mon.slice(8)} 주)`);
-  if (P.km >= 10) { const ch = Math.round((A.km - P.km) / P.km * 100); hl.push(`전월 대비 거리 ${ch >= 0 ? '+' : ''}${ch}% (${P.km.toFixed(1)}km → ${A.km.toFixed(1)}km)`); }
+  if (P.km >= 10) { const ch = Math.round((A.km - P.km) / P.km * 100); hl.push(`전월${partial ? ' 같은 기간' : ''} 대비 거리 ${ch >= 0 ? '+' : ''}${ch}% (${P.km.toFixed(1)}km → ${A.km.toFixed(1)}km)`); }
   // 월간 최다 기록 여부
   const monthTotals = {}; runsAll.forEach(w => { const k = w.date.slice(0, 7); monthTotals[k] = (monthTotals[k] || 0) + kmOf(w); });
   if (A.km > 0 && Object.entries(monthTotals).every(([k, v]) => k === month || v < A.km) && Object.keys(monthTotals).length > 2) hl.push('역대 최다 월간 거리');
@@ -99,9 +101,8 @@ export function buildMonthReport(month, { workouts = [], races = [], logs = [], 
   if (pk.length) hl.push(`컨디션 메모: ${pk.map(([a, n]) => `${a} 통증 ${n}일`).join(', ')}`);
   if (crossN) hl.push(`크로스·보강 운동 ${crossN}회`);
 
-  const done = today && today < `${month}-${pad(daysInMonth)}` && today >= `${month}-01`;
   return {
-    v: 1, month, label: `${y}년 ${m}월`, name: name || '', partial: !!done, asOf: done ? today : null,
+    v: 1, month, label: `${y}년 ${m}월`, name: name || '', partial, asOf: partial ? today : null,
     km: +A.km.toFixed(1), runs: A.n, days, daysInMonth, sec: Math.round(A.sec), pace: A.pace, hr: A.hr,
     prev: { km: +P.km.toFixed(1), runs: P.n }, ytd: +ytd.toFixed(1), year: y,
     byType, weeks: weeks.map(w => ({ mon: w.mon, km: +w.km.toFixed(1) })), daily: Object.fromEntries(Object.entries(daily).map(([k, v]) => [k, +v.toFixed(1)])),
@@ -134,7 +135,7 @@ export function reportCardHTML(d, opts = {}) {
     </div>
     <div class="rc-hero">
       <div class="rc-big"><b>${d.km.toFixed(1)}</b><span>km</span></div>
-      ${chg != null ? `<div class="rc-chg ${chg >= 0 ? 'up' : 'down'}">전월 대비 ${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg)}%</div>` : ''}
+      ${chg != null ? `<div class="rc-chg ${chg >= 0 ? 'up' : 'down'}">전월${d.partial ? ' 같은 기간' : ''} 대비 ${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg)}%</div>` : ''}
     </div>
     <div class="rc-stats">
       <div><small>러닝 횟수</small><b>${d.runs}<i>회</i></b></div>
@@ -168,7 +169,7 @@ export function reportCardHTML(d, opts = {}) {
 export function reportText(d, opts = {}) {
   const chg = d.prev.km >= 10 ? Math.round((d.km - d.prev.km) / d.prev.km * 100) : null;
   const L = [`🏃 ${d.name ? `${d.name}의 ` : ''}${d.label} 러닝 리포트${d.partial ? ` (${+d.asOf.slice(5, 7)}/${+d.asOf.slice(8)} 기준)` : ''}`, ''];
-  L.push(`📏 월 거리 ${d.km.toFixed(1)}km${chg != null ? ` (전월 대비 ${chg >= 0 ? '+' : ''}${chg}%)` : ''}`);
+  L.push(`📏 월 거리 ${d.km.toFixed(1)}km${chg != null ? ` (전월${d.partial ? ' 같은 기간' : ''} 대비 ${chg >= 0 ? '+' : ''}${chg}%)` : ''}`);
   L.push(`🔁 러닝 ${d.runs}회 · 훈련 ${d.days}일 · ${d.sec ? fmtDuration(d.sec) : '-'}`);
   if (d.pace) L.push(`⏱ 평균 페이스 ${fmtPace(d.pace)}/km${d.hr ? ` · 평균 심박 ${d.hr}` : ''}`);
   if (d.byType.length) L.push(`🧩 ${d.byType.map(t => `${t.label} ${t.n}회`).join(' · ')}`);
