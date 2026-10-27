@@ -125,7 +125,7 @@ export function reportCardHTML(d, opts = {}) {
     const lv = !v ? 0 : v < 6 ? 1 : v < 11 ? 2 : v < 20 ? 3 : 4;
     cells.push(`<i class="rc-d l${lv}" title="${m}/${k} ${v ? v + 'km' : ''}">${k}</i>`);
   }
-  const room = Math.max(2, 6 - d.races.length * 2 - (d.note ? Math.ceil(d.note.length / 45) + 1 : 0));
+  const room = Math.max(2, 6 - Math.max(0, d.races.length - 1) * 2 - (d.note ? Math.ceil(d.note.length / 45) + 1 : 0));
   const hl = (opts.highlights ?? d.highlights).slice(0, opts.maxHl ?? room);
   return `<div class="rc-card" id="${opts.id || 'report-card'}">
     <div class="rc-top">
@@ -152,8 +152,8 @@ export function reportCardHTML(d, opts = {}) {
       </div>
       <div class="rc-box">
         <div class="rc-h">주간 거리</div>
-        <div class="rc-weeks">${d.weeks.map(w => `<div class="rc-w"><em>${w.km ? Math.round(w.km) : ''}</em><i style="height:${Math.max(2, w.km / maxW * 64)}px"></i><span>${+w.mon.slice(5, 7)}/${+w.mon.slice(8)}</span></div>`).join('')}</div>
-        <div class="rc-cal">${['월', '화', '수', '목', '금', '토', '일'].map(x => `<i class="rc-d h">${x}</i>`).join('')}${cells.join('')}</div>
+        <div class="rc-weeks" style="${d.races.length ? 'height:96px' : ''}">${d.weeks.map(w => `<div class="rc-w"><em>${w.km ? Math.round(w.km) : ''}</em><i style="height:${Math.max(2, w.km / maxW * 64)}px"></i><span>${+w.mon.slice(5, 7)}/${+w.mon.slice(8)}</span></div>`).join('')}</div>
+        ${d.races.length ? '' : `<div class="rc-cal">${['월', '화', '수', '목', '금', '토', '일'].map(x => `<i class="rc-d h">${x}</i>`).join('')}${cells.join('')}</div>`}
       </div>
     </div>
     ${d.races.length ? `<div class="rc-box rc-races"><div class="rc-h">대회 기록</div>${d.races.map(r => `<div class="rc-race"><div><b>${esc(r.name)}</b><span>${+r.date.slice(5, 7)}/${+r.date.slice(8)} · ${esc(r.dist)}</span></div><div class="rc-rt">${esc(r.time)}${r.pb ? '<em>PB</em>' : ''}<span>${r.pace ? r.pace + '/km' : ''}${r.goal ? ` · 목표 ${esc(r.goal)}` : ''}</span></div></div>`).join('')}</div>` : ''}
