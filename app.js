@@ -1017,7 +1017,7 @@ function renderReport() {
           <button class="btn" id="rp-text">텍스트 복사</button>
         </div>
         <div id="rp-link-box" class="rp-link-box"></div>
-        <h3>특이사항 <span class="muted" style="font-size:12px;font-weight:500">체크한 항목만 카드에 보여요</span></h3>
+        <h3>특이사항 <span class="muted" style="font-size:12px;font-weight:500">체크한 항목 중 위에서부터 카드에 들어가는 만큼 보여요 (공간이 부족하면 덜 중요한 항목을 해제하세요)</span></h3>
         ${d.allHighlights.length ? d.allHighlights.map(h => `<label class="ck"><input type="checkbox" class="rp-hl" data-k="${esc(hlKey(h))}" ${hidden.has(hlKey(h)) ? '' : 'checked'}><span>${esc(h)}</span></label>`).join('') : '<p class="muted">이 달에는 자동 특이사항이 없어요.</p>'}
         <label style="margin-top:10px">직접 쓰는 특이사항·한 줄 소감<textarea id="rp-note" rows="4" maxlength="300" placeholder="예: JTBC 서울마라톤 앞두고 테이퍼링 시작. 발목 통증 관리하며 마무리!">${esc(mp.note || '')}</textarea></label>
         <p class="muted" style="font-size:12px">이미지는 인스타그램 4:5 비율(1080×1350)로 저장돼요. 공유 링크는 로그인 없이 볼 수 있는 이 달의 요약 페이지예요 (메모·이미지·위치 같은 상세 기록은 포함되지 않아요).</p>

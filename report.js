@@ -125,7 +125,8 @@ export function reportCardHTML(d, opts = {}) {
     const lv = !v ? 0 : v < 6 ? 1 : v < 11 ? 2 : v < 20 ? 3 : 4;
     cells.push(`<i class="rc-d l${lv}" title="${m}/${k} ${v ? v + 'km' : ''}">${k}</i>`);
   }
-  const hl = (opts.highlights ?? d.highlights).slice(0, opts.maxHl ?? 6);
+  const room = Math.max(2, 6 - d.races.length * 2 - (d.note ? Math.ceil(d.note.length / 45) + 1 : 0));
+  const hl = (opts.highlights ?? d.highlights).slice(0, opts.maxHl ?? room);
   return `<div class="rc-card" id="${opts.id || 'report-card'}">
     <div class="rc-top">
       <div><div class="rc-brand">42<span>.195</span> RUNNING REPORT</div>
@@ -194,7 +195,7 @@ export async function cardToBlob(el) {
   await document.fonts?.ready;
   const holder = document.createElement('div');
   holder.style.cssText = 'position:fixed;left:-10000px;top:0;zoom:1;transform:none';
-  const clone = el.cloneNode(true); clone.removeAttribute('id'); holder.appendChild(clone); document.body.appendChild(holder);
+  const clone = el.cloneNode(true); clone.removeAttribute('id'); clone.style.borderRadius = '0'; holder.appendChild(clone); document.body.appendChild(holder);
   try {
     const canvas = await h2c(clone, { scale: 2, backgroundColor: '#0f172a', useCORS: true, logging: false, width: clone.offsetWidth, height: clone.offsetHeight });
     return await new Promise(res => canvas.toBlob(res, 'image/png'));
