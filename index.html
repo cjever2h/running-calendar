@@ -39,6 +39,7 @@
   <!-- 메인 앱 -->
   <div id="app" class="hidden">
     <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="메뉴 열기"><i></i><i></i><i></i></button>
       <div class="brand">
         <div class="logo sm">42<span>.195</span></div>
         <div>
@@ -66,9 +67,27 @@
           <span class="muted">가민 공유 이미지, 가민 데이터 내보내기(JSON: summarizedActivities·gear), GPX·FIT·CSV 파일로 기록을 한 번에 넣을 수 있어요</span>
         </div>
         <div id="alerts" class="alerts"></div>
+        <div class="seg-row">
+          <div class="seg-tabs" id="sum-seg" role="tablist" aria-label="요약 기간">
+            <button data-k="week">이번 주</button><button data-k="month" class="on">이번 달</button><button data-k="year">올해</button>
+          </div>
+          <div class="seg-tabs" id="cal-mode" role="tablist" aria-label="보기 방식">
+            <button data-k="cal" class="on">달력</button><button data-k="board">주간 보드</button>
+          </div>
+        </div>
         <div class="stats-row" id="month-stats"></div>
         <div class="cal-layout">
-          <div class="card cal-card">
+          <div class="card board-card hidden" id="board-card">
+            <div class="cal-head">
+              <button class="icon-btn" id="board-prev" aria-label="이전 주">‹</button>
+              <h2 id="board-title"></h2>
+              <button class="icon-btn" id="board-next" aria-label="다음 주">›</button>
+              <button class="btn sm" id="board-today">이번 주</button>
+            </div>
+            <p class="muted board-help">카드를 다른 칸으로 끌어 놓으면 상태가 바뀌어요 (휴대폰은 카드를 눌러 선택)</p>
+            <div class="board" id="board"></div>
+          </div>
+          <div class="card cal-card" id="cal-card">
             <div class="cal-head">
               <button class="icon-btn" id="prev-month" aria-label="이전 달">‹</button>
               <h2 id="month-title"></h2>
@@ -102,6 +121,7 @@
           <button class="btn primary" id="add-shoe">+ 러닝화 추가</button>
         </div>
         <p class="muted" style="font-size:13px;margin-top:-6px">훈련 기록에 러닝화를 지정하면 거리가 자동으로 누적돼요. 교체 권장 거리(보통 600~800km)의 80%·90%·100%에 도달하면 알려드려요.</p>
+        <div class="chips filter-chips" id="shoe-chips"></div>
         <div class="shoe-grid" id="shoe-grid"></div>
         <div id="shoe-history"></div>
       </section>
@@ -136,6 +156,7 @@
         </div>
         <div class="card">
           <h2>러닝 일지 (느낀 점)</h2>
+          <div class="journal-tools"><input id="journal-q" type="search" placeholder="훈련 제목·메모 검색"><div class="chips filter-chips" id="journal-chips"></div></div>
           <div id="journal-list"></div>
         </div>
       </section>
@@ -201,6 +222,7 @@
   <!-- 모달 -->
   <div class="modal-backdrop hidden" id="modal">
     <div class="modal">
+      <div class="sheet-handle"><i></i></div>
       <div class="modal-head">
         <h3 id="modal-title"></h3>
         <button class="icon-btn" id="modal-close" aria-label="닫기">×</button>
@@ -208,6 +230,14 @@
       <div id="modal-body"></div>
     </div>
   </div>
+
+  <nav class="bottom-tabs" id="bottom-tabs" aria-label="주요 메뉴">
+    <button data-view="calendar" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>캘린더</span></button>
+    <button data-view="journal"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>통계</span></button>
+    <button class="fab-slot" id="fab" aria-label="기록 추가"><b>+</b></button>
+    <button data-view="shoes"><svg viewBox="0 0 24 24"><path d="M2 17h20v2H2zM3 17l2-7 4 1 2 3 9 1 1 2"/></svg><span>러닝화</span></button>
+    <button id="more-btn"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>더보기</span></button>
+  </nav>
 
   <div class="toast hidden" id="toast"></div>
 

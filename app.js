@@ -7,6 +7,7 @@ import { TYPES, SHOE_PURPOSES, RACE_DISTANCES, PRIORITY, distLabel, racePace, pa
 import { paceZones, hrZones, zoneText, TYPE_ZONE } from './zones.js';
 import { generatePlan, weeklyLoad, PHASES, DAY_NAMES, phaseSplit } from './planner.js';
 import { parseFile } from './importers.js';
+import { isMobile, sheetDrag, actionSheet, drawer, pullToRefresh, swipeToDelete, autocomplete, stepperHTML, skeleton } from './ui.js';
 import { isActivitiesExport, isGearExport, parseActivities, parseGear, matchShoe, gearToShoe } from './garminExport.js';
 import { renderStrategy } from './strategy.js';
 import { conditionForm, readConditionForm, conditionAlerts, intensityWarning } from './condition.js';
@@ -26,6 +27,7 @@ const state = {
   statTab: 'week',
   statRange: { week: 'w12', month: 'm6', type: 'w12', cum: 'all', heat: 'y', cond: 'w12' },
   importQueue: [],
+  sumPeriod: 'month', calMode: 'cal', boardWeek: null, journalFilter: 'all', journalQ: '', shoeFilter: 'all',
 };
 
 /* ---------- 날짜 유틸 ---------- */
@@ -103,22 +105,161 @@ function renderHeader() {
 }
 
 /* ---------- 캘린더 ---------- */
+/* ---------- 요약 통계: 세그먼트 버튼 (이번 주 / 이번 달 / 올해) ---------- */
 function renderMonthStats() {
-  const y = state.month.getFullYear(), m = state.month.getMonth();
-  const prefix = `${y}-${String(m + 1).padStart(2, '0')}`;
-  const list = state.workouts.filter(w => w.date.startsWith(prefix) && !['rest', 'cross', 'strength'].includes(w.type));
-  const due = list.filter(w => w.date <= todayIso());
+  const today = todayIso();
+  const per = state.sumPeriod || 'month';
+  $$('#sum-seg button').forEach(b => b.classList.toggle('on', b.dataset.k === per));
+  let from, to, label;
+  if (per === 'week') { from = mondayOf(today); to = addDaysIso(from, 6); label = '이번 주'; }
+  else if (per === 'year') { from = today.slice(0, 4) + '-01-01'; to = today.slice(0, 4) + '-12-31'; label = `${today.slice(0, 4)}년`; }
+  else {
+    const y = state.month.getFullYear(), m = state.month.getMonth();
+    const prefix = `${y}-${String(m + 1).padStart(2, '0')}`;
+    from = prefix + '-01'; to = prefix + '-31'; label = `${m + 1}월`;
+  }
+  const list = state.workouts.filter(w => w.date >= from && w.date <= to && !['rest', 'cross', 'strength'].includes(w.type));
+  const due = list.filter(w => w.date <= today);
   const done = list.filter(w => w.status === 'done');
   const plannedKm = list.reduce((a, w) => a + Number(w.planned_distance || 0), 0);
   const doneKm = done.reduce((a, w) => a + Number(w.actual_distance || w.planned_distance || 0), 0);
-  const rate = due.length ? Math.round(done.filter(w => w.date <= todayIso()).length / due.length * 100) : 0;
+  const rate = due.length ? Math.round(done.filter(w => w.date <= today).length / due.length * 100) : 0;
   const missed = list.filter(w => ['missed', 'skipped'].includes(effStatus(w))).length;
   $('#month-stats').innerHTML = `
-    <div class="stat"><div class="k">${m + 1}월 계획 거리</div><div class="v">${plannedKm.toFixed(1)}<small> km</small></div></div>
-    <div class="stat"><div class="k">완료 거리</div><div class="v">${doneKm.toFixed(1)}<small> km</small></div>
+    <div class="stat"><div class="k">${label} 계획 거리</div><div class="v">${plannedKm.toFixed(1)}<small> km</small></div></div>
+    <div class="stat"><div class="k">${label} 완료 거리</div><div class="v">${doneKm.toFixed(1)}<small> km</small></div>
       <div class="bar"><i style="width:${plannedKm ? Math.min(100, doneKm / plannedKm * 100) : 0}%"></i></div></div>
     <div class="stat"><div class="k">완료율 (오늘까지)</div><div class="v">${rate}<small> %</small></div></div>
     <div class="stat"><div class="k">완료 / 미완료 / 전체</div><div class="v">${done.length}<small> / ${missed} / ${list.length}회</small></div></div>`;
+}
+
+/* ---------- 상태 배지 ---------- */
+function statusBadge(st) {
+  const map = { done: ['done', '완료'], skipped: ['miss', '미완료'], missed: ['miss', '미완료'], planned: ['plan', '예정'], rest: ['rest', '휴식'] };
+  const [c, t] = map[st] || map.planned;
+  return `<span class="sbadge ${c}">${t}</span>`;
+}
+function shoeState(s) {
+  const { pct } = shoeLevel(s);
+  if (s.retired) return { k: 'retired', label: '은퇴', cls: 'rest' };
+  if (pct >= 1) return { k: 'replace', label: '교체 필요', cls: 'miss' };
+  if (pct >= 0.8) return { k: 'soon', label: '교체 임박', cls: 'warn' };
+  return { k: 'ok', label: '양호', cls: 'done' };
+}
+
+/* ---------- 칸반: 주간 보드 ---------- */
+const BOARD_COLS = [
+  { k: 'planned', label: '예정', test: w => effStatus(w) === 'planned' },
+  { k: 'done', label: '완료', test: w => w.status === 'done' },
+  { k: 'skipped', label: '미완료', test: w => ['skipped', 'missed'].includes(effStatus(w)) },
+];
+async function setWorkoutStatus(w, st) {
+  if (w.status === st || (st === 'planned' && effStatus(w) === 'planned')) return;
+  const patch = { ...w, status: st };
+  if (st === 'done' && w.type !== 'rest') {
+    if (!patch.actual_distance && w.planned_distance) patch.actual_distance = w.planned_distance;
+    if (!patch.shoe_id && !['cross', 'strength'].includes(w.type)) patch.shoe_id = lastShoeId() || null;
+  }
+  await guard(() => saveW(patch), st === 'done' ? `'${w.title}' 완료로 옮겼어요` : st === 'skipped' ? `'${w.title}' 미완료로 옮겼어요` : `'${w.title}' 예정으로 옮겼어요`);
+}
+function renderBoard() {
+  const on = state.calMode === 'board';
+  $$('#cal-mode button').forEach(b => b.classList.toggle('on', b.dataset.k === (on ? 'board' : 'cal')));
+  $('#board-card').classList.toggle('hidden', !on);
+  $('#cal-card').classList.toggle('hidden', on);
+  if (!on) return;
+  const mon = state.boardWeek || mondayOf(state.selected || todayIso());
+  state.boardWeek = mon;
+  const sun = addDaysIso(mon, 6);
+  $('#board-title').textContent = `${+mon.slice(5, 7)}/${+mon.slice(8)} ~ ${+sun.slice(5, 7)}/${+sun.slice(8)}`;
+  const ws = state.workouts.filter(w => w.date >= mon && w.date <= sun && w.type !== 'rest').sort((a, b) => a.date.localeCompare(b.date));
+  $('#board').innerHTML = BOARD_COLS.map(c => {
+    const list = ws.filter(c.test);
+    const km = list.reduce((s, w) => s + Number((c.k === 'done' ? w.actual_distance : 0) || w.planned_distance || 0), 0);
+    return `<div class="b-col" data-st="${c.k}"><div class="b-head"><b>${c.label}</b><span>${list.length}개 · ${km.toFixed(1)}km</span></div>
+      ${list.map(w => { const t = TYPES[w.type] || TYPES.easy; const km2 = w.status === 'done' && w.actual_distance ? w.actual_distance : w.planned_distance;
+        return `<div class="b-card" draggable="true" data-id="${w.id}" style="--c:${t.color}"><div class="b-top"><span class="badge" style="--c:${t.color}">${t.label}</span>${statusBadge(effStatus(w))}</div>
+          <div class="b-title">${esc(w.title)}</div><div class="b-sub">${korDate(w.date)}${km2 ? ` · ${Number(km2)}km` : ''}${w.actual_time ? ` · ${esc(w.actual_time)}` : ''}</div></div>`; }).join('') || '<div class="b-empty">여기로 끌어 놓기</div>'}
+    </div>`;
+  }).join('');
+  $$('#board .b-card').forEach(card => {
+    const w = state.workouts.find(x => x.id === card.dataset.id);
+    card.addEventListener('dragstart', e => { e.dataTransfer.setData('text/wid', w.id); card.classList.add('dragging'); });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+    card.addEventListener('click', () => {
+      actionSheet(`${w.title} · ${korDate(w.date)}`, [
+        { icon: '✓', label: '완료로 옮기기', onClick: () => setWorkoutStatus(w, 'done') },
+        { icon: '✗', label: '미완료로 옮기기', onClick: () => setWorkoutStatus(w, 'skipped') },
+        { icon: '○', label: '예정으로 옮기기', onClick: () => setWorkoutStatus(w, 'planned') },
+        { icon: '↗', label: '날짜 상세 보기', onClick: () => { state.calMode = 'cal'; selectDate(w.date, true); } },
+      ]);
+    });
+  });
+  $$('#board .b-col').forEach(col => {
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('drop'); });
+    col.addEventListener('dragleave', () => col.classList.remove('drop'));
+    col.addEventListener('drop', e => {
+      e.preventDefault(); col.classList.remove('drop');
+      const w = state.workouts.find(x => x.id === e.dataTransfer.getData('text/wid'));
+      if (w) setWorkoutStatus(w, col.dataset.st);
+    });
+  });
+}
+
+/* ---------- 바텀 탭바·서랍 메뉴·플로팅 추가 버튼 ---------- */
+function openDrawer() {
+  const go = v => () => switchView(v);
+  drawer([
+    { title: '화면', items: [
+      { icon: '📅', label: '캘린더', active: state.view === 'calendar', onClick: go('calendar') },
+      { icon: '🏁', label: '대회 전략', active: state.view === 'strategy', onClick: go('strategy') },
+      { icon: '👟', label: '러닝화', active: state.view === 'shoes', onClick: go('shoes') },
+      { icon: '📊', label: '통계·일지', active: state.view === 'journal' && state.statTab !== 'report', onClick: () => { state.statTab = state.statTab === 'report' ? 'week' : state.statTab; switchView('journal'); } },
+      { icon: '🖼', label: '월간 리포트 (공유)', active: state.view === 'journal' && state.statTab === 'report', onClick: () => { state.statTab = 'report'; switchView('journal'); } },
+      { icon: '⚙', label: '설정', active: state.view === 'settings', onClick: go('settings') },
+    ] },
+    { title: '기록·계획', items: [
+      { icon: '📷', label: '가민 이미지로 기록 입력', onClick: () => $('#garmin-input').click() },
+      { icon: '📂', label: '가민 데이터·GPX·FIT·CSV 가져오기', onClick: () => $('#file-import').click() },
+      { icon: '🗓', label: '훈련 계획 만들기', onClick: () => openPlanModal(mainRace()) },
+      { icon: '➕', label: '오늘 훈련 추가', onClick: () => openWorkoutModal({ date: todayIso(), type: 'easy', status: 'planned' }) },
+    ] },
+    { title: '계정', items: [
+      { icon: '☁', label: '지금 백업', onClick: () => guard(() => store.autoBackup(true), '지금 백업했어요') },
+      { icon: '🔑', label: '비밀번호 변경', onClick: () => openPasswordModal() },
+      { icon: '⎋', label: '로그아웃', danger: true, onClick: async () => { await store.signOut(); location.reload(); } },
+    ] },
+  ], { title: '런닝 캘린더', sub: state.userEmail || '' });
+}
+function openAddSheet() {
+  const d = state.view === 'calendar' && state.selected ? state.selected : todayIso();
+  actionSheet('무엇을 기록할까요?', [
+    { icon: '📷', label: '가민 이미지로 기록 입력', sub: '공유 이미지에서 거리·시간·심박 자동 인식', onClick: () => $('#garmin-input').click() },
+    { icon: '📂', label: '가민 데이터·GPX·FIT·CSV 가져오기', onClick: () => $('#file-import').click() },
+    { icon: '➕', label: `${korDate(d)} 훈련 추가`, onClick: () => openWorkoutModal({ date: d, type: 'easy', status: 'planned' }) },
+    { icon: '💤', label: `${korDate(d)} 컨디션 기록`, onClick: () => { switchView('calendar'); selectDate(d, true); setTimeout(() => { const c = $('.cond-card'); if (c) { c.open = true; c.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, 150); } },
+  ]);
+}
+
+/* ---------- 당겨서 새로고침 ---------- */
+async function reloadData() {
+  await loadAll();
+  refresh();
+  toast('최신 데이터로 새로고침했어요');
+}
+
+/* ---------- 자동완성 데이터 ---------- */
+function titleSuggestions(q) {
+  const m = new Map();
+  for (const w of [...state.workouts].reverse()) {
+    if (!w.title || w.type === 'rest') continue;
+    const key = w.title.trim(); if (m.has(key)) { m.get(key).n++; continue; }
+    m.set(key, { label: key, w, n: 1 });
+  }
+  const ql = q.toLowerCase();
+  return [...m.values()].filter(x => !ql || x.label.toLowerCase().includes(ql))
+    .sort((a, b) => (b.label.toLowerCase().startsWith(ql) - a.label.toLowerCase().startsWith(ql)) || b.n - a.n)
+    .map(x => ({ label: x.label, sub: `${(TYPES[x.w.type] || TYPES.easy).label}${x.w.planned_distance ? ` · ${Number(x.w.planned_distance)}km` : ''}${x.w.target_pace ? ` · ${x.w.target_pace}` : ''} · ${x.n}회`, w: x.w }));
 }
 
 /* ---------- 알림 배너: 오늘 훈련·부하·러닝화·컨디션 ---------- */
@@ -369,6 +510,7 @@ function openImportModal(file, target = null) {
     <div class="imp-grid">
       <div class="imp-img"><img src="${url}" alt="업로드한 이미지"></div>
       <div>
+        <div id="imp-steps">${stepperHTML(['이미지', '자동 인식', '확인·수정', '저장'], 1)}</div>
         <div class="ocr-status" id="ocr-status"><span id="ocr-msg">이미지 읽는 중...</span><div class="bar"><i id="ocr-bar" style="width:3%"></i></div></div>
         <form id="imp-form" class="form-grid">
           <label>날짜<input type="date" name="date" value="${target?.date || today}" required></label>
@@ -417,6 +559,7 @@ function openImportModal(file, target = null) {
     f.title.oninput = () => { f.title.dataset.edited = '1'; };
     f.target.onchange = applyTarget;
     $('#imp-skip', body).onclick = () => { URL.revokeObjectURL(url); closeModal(); };
+    const setImpStep = s => { const el = $('#imp-steps', body); if (el) el.innerHTML = stepperHTML(['이미지', '자동 인식', '확인·수정', '저장'], s); };
 
     recognizeGarmin(file, (msg, p) => {
       $('#ocr-msg', body) && ($('#ocr-msg', body).textContent = msg + (p > 0 && p < 1 ? ` ${Math.round(p * 100)}%` : ''));
@@ -424,6 +567,7 @@ function openImportModal(file, target = null) {
     }).then(r => {
       ocr = r;
       if (!$('#imp-form')) return;
+      setImpStep(2);
       $('#ocr-text', body).textContent = r.rawText;
       const found = [r.date && '날짜', r.distance && '거리', r.time && '시간', r.avgHr && '심박'].filter(Boolean);
       $('#ocr-msg', body).textContent = found.length ? `인식 완료: ${found.join('·')} 자동 입력됨. 확인 후 저장하세요.` : '자동 인식에 실패했어요. 직접 입력해 주세요.';
@@ -448,7 +592,7 @@ function openImportModal(file, target = null) {
 
     f.onsubmit = async e => {
       e.preventDefault();
-      const btn = $('button[type=submit]', f); btn.disabled = true; btn.textContent = '저장 중...';
+      const btn = $('button[type=submit]', f); btn.disabled = true; btn.textContent = '저장 중...'; setImpStep(3);
       try {
         const existing = state.workouts.find(x => x.id === f.target.value);
         const id = existing?.id || crypto.randomUUID();
@@ -641,6 +785,14 @@ function openWorkoutModal(w) {
       if (f.planned_distance.value && pk && (force || !f.planned_duration.value)) f.planned_duration.value = fmtDuration(Math.round(Number(f.planned_distance.value) * pk));
     };
     help();
+    autocomplete(f.title, q => titleSuggestions(q), it => {
+      const s = it.w; f.type.value = s.type === 'race' ? f.type.value : s.type;
+      if (s.planned_distance && !f.planned_distance.value) f.planned_distance.value = s.planned_distance;
+      if (s.target_pace && !f.target_pace.value) f.target_pace.value = s.target_pace;
+      const det = (s.details || '').replace(/^\[[^\]]*\]\n?/, '').replace(/\n*\[(가민|GPX|FIT|CSV) 기록\][\s\S]*$/, '').trim();
+      if (det && !f.details.value) f.details.value = det;
+      fill(false);
+    });
     $('#w-cancel', body).onclick = closeModal;
     $('#w-zone', body).onclick = () => fill(true);
     f.type.onchange = () => { if (!f.title.value) f.title.value = TYPES[f.type.value].label; fill(false); };
@@ -701,14 +853,22 @@ function renderShoes() {
     grid.innerHTML = '<div class="card empty" style="grid-column:1/-1">등록된 러닝화가 없어요. 오른쪽 위 버튼으로 추가해 보세요.</div>';
     $('#shoe-history').innerHTML = ''; return;
   }
-  const sorted = [...state.shoes].sort((a, b) => Number(a.retired) - Number(b.retired));
+  const counts = { all: state.shoes.length, ok: 0, soon: 0, replace: 0, retired: 0 };
+  state.shoes.forEach(s => { counts[shoeState(s).k]++; });
+  const sf = state.shoeFilter || 'all';
+  $('#shoe-chips').innerHTML = [['all', '전체'], ['active', '사용 중'], ['soon', '교체 임박'], ['replace', '교체 필요'], ['retired', '은퇴']]
+    .map(([k, l]) => { const n = k === 'active' ? counts.ok + counts.soon + counts.replace : counts[k]; return n || k === 'all' ? `<button type="button" class="fchip ${sf === k ? 'on' : ''}" data-k="${k}">${l} <small>${n}</small></button>` : ''; }).join('');
+  $('#shoe-chips .fchip').forEach(b => b.onclick = () => { state.shoeFilter = b.dataset.k; renderShoes(); });
+  const sorted = [...state.shoes].sort((a, b) => Number(a.retired) - Number(b.retired))
+    .filter(s => { const k = shoeState(s).k; return sf === 'all' || (sf === 'active' ? k !== 'retired' : k === sf); });
+  if (!sorted.length) { grid.innerHTML = '<div class="card empty" style="grid-column:1/-1">조건에 맞는 러닝화가 없어요.</div>'; renderShoeHistory(); return; }
   grid.innerHTML = sorted.map(s => {
     const { total, runs } = shoeKm(s);
     const max = Number(s.max_km || 700);
     const pct = Math.min(100, total / max * 100);
     const last = runs.map(r => r.date).sort().pop();
     return `<div class="shoe ${s.retired ? 'retired' : ''} ${state.shoeFocus === s.id ? 'active-sel' : ''}" style="--c:${s.color || '#3b82f6'}" data-id="${s.id}">
-      <div class="s-name">${esc(shoeName(s))}${s.retired ? '<span class="tag">은퇴</span>' : ''}${s.purpose ? `<span class="tag">${esc(s.purpose)}</span>` : ''}</div>
+      <div class="s-name">${esc(shoeName(s))} <span class="sbadge ${shoeState(s).cls}">${shoeState(s).label}</span>${s.purpose ? `<span class="tag">${esc(s.purpose)}</span>` : ''}</div>
       <div class="s-sub">${esc(s.brand)} ${esc(s.model)}${s.purchase_date ? ` · 첫 사용 ${s.purchase_date}` : ''}</div>
       <div class="s-km">${total.toFixed(1)}<small> / ${max} km</small></div>
       <div class="bar ${pct >= 100 ? 'over' : pct >= 80 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
@@ -797,22 +957,43 @@ function renderJournal() {
   if (isReport) renderReport();
   else {
   $('#stat-range').innerHTML = Object.entries(RANGES).map(([k, v]) => `<option value="${k}" ${k === range ? 'selected' : ''}>${v}</option>`).join('');
+  $('#view-journal .chart-row').classList.add('loading');
   renderStats($('#view-journal'), {
     workouts: state.workouts, logs: state.logs, races: state.races, tab, range, today: todayIso(),
     onPickDate: d => { switchView('calendar'); selectDate(d < todayIso() ? d : todayIso(), true); },
     onPickMonth: m => { state.reportMonth = m; state.statTab = 'report'; renderJournal(); window.scrollTo({ top: 0, behavior: 'smooth' }); },
-  }).catch(e => { console.error(e); $('#stat-note').textContent = '그래프를 불러오지 못했어요: ' + e.message; });
+  }).catch(e => { console.error(e); $('#stat-note').textContent = '그래프를 불러오지 못했어요: ' + e.message; })
+    .finally(() => $('#view-journal .chart-row').classList.remove('loading'));
   }
 
-  const entries = state.workouts.filter(w => w.memo).sort((a, b) => b.date.localeCompare(a.date));
+  renderJournalList();
+}
+/* 러닝 일지: 필터 칩 + 검색 + 밀어서 메모 삭제 */
+function renderJournalList() {
+  const q = (state.journalQ || '').trim().toLowerCase(), jf = state.journalFilter || 'all';
+  const all = state.workouts.filter(w => w.memo).sort((a, b) => b.date.localeCompare(a.date));
+  const types = Object.keys(TYPES).filter(k => all.some(w => w.type === k));
+  if (jf !== 'all' && !types.includes(jf)) state.journalFilter = 'all';
+  $('#journal-chips').innerHTML = [['all', '전체', all.length], ...types.map(k => [k, TYPES[k].label, all.filter(w => w.type === k).length])]
+    .map(([k, l, n]) => `<button type="button" class="fchip ${(state.journalFilter || 'all') === k ? 'on' : ''}" data-k="${k}">${esc(l)} <small>${n}</small></button>`).join('');
+  $$('#journal-chips .fchip').forEach(b => b.onclick = () => { state.journalFilter = b.dataset.k; renderJournalList(); });
+  const entries = all.filter(w => ((state.journalFilter || 'all') === 'all' || w.type === state.journalFilter) && (!q || `${w.title} ${w.memo}`.toLowerCase().includes(q)));
   $('#journal-list').innerHTML = entries.length ? entries.map(w => {
     const t = TYPES[w.type] || TYPES.easy; const sh = state.shoes.find(s => s.id === w.shoe_id);
     const p = paceOf(w.actual_distance, w.actual_time);
-    return `<div class="entry" data-date="${w.date}"><div class="e-head"><b>${korDate(w.date)}</b><span class="badge" style="--c:${t.color}">${t.label}</span>
+    return `<div class="entry" data-id="${w.id}" data-date="${w.date}"><div class="e-head"><b>${korDate(w.date)}</b><span class="badge" style="--c:${t.color}">${t.label}</span>${statusBadge(effStatus(w))}
       <span>${esc(w.title)}</span>${w.actual_distance ? `<span>${Number(w.actual_distance)}km</span>` : ''}${p ? `<span>${fmtPace(p)}/km</span>` : ''}${w.rpe ? `<span>RPE ${w.rpe}</span>` : ''}${sh ? `<span>러닝화: ${esc(shoeName(sh))}</span>` : ''}</div>
       <div class="e-memo">${esc(w.memo)}</div></div>`;
-  }).join('') : '<div class="empty">아직 작성한 메모가 없어요. 캘린더에서 날짜를 눌러 느낀 점을 남겨보세요.</div>';
-  $$('#journal-list .entry').forEach(el => el.onclick = () => { switchView('calendar'); selectDate(el.dataset.date, true); });
+  }).join('') : `<div class="empty">${all.length ? '조건에 맞는 메모가 없어요.' : '아직 작성한 메모가 없어요. 캘린더에서 날짜를 눌러 느낀 점을 남겨보세요.'}</div>`;
+  $$('#journal-list .entry').forEach(el => {
+    el.onclick = () => { switchView('calendar'); selectDate(el.dataset.date, true); };
+    const w = state.workouts.find(x => x.id === el.dataset.id);
+    swipeToDelete(el, async () => {
+      if (!confirm(`${korDate(w.date)} '${w.title}'의 메모를 삭제할까요? (훈련 기록은 남아요)`)) { renderJournalList(); return; }
+      await guard(() => store.saveWorkout({ ...w, memo: null }).then(s => { const i = state.workouts.findIndex(x => x.id === s.id); state.workouts[i] = s; }), '메모를 삭제했어요');
+      renderJournalList();
+    }, { label: '메모 삭제' });
+  });
 }
 
 /* ---------- 가민 내보내기(JSON) 가져오기 ---------- */
@@ -1011,6 +1192,7 @@ function renderReport() {
       <div class="rp-preview"><div class="rp-scale">${reportCardHTML(d)}</div></div>
       <div class="rp-side">
         <div class="rp-actions">
+          <button class="btn primary sheet-only" id="rp-sheet">공유하기</button>
           <button class="btn primary" id="rp-img">이미지 저장</button>
           <button class="btn" id="rp-share-img">이미지 공유</button>
           <button class="btn" id="rp-link">공유 링크 만들기</button>
@@ -1033,6 +1215,12 @@ function renderReport() {
     setMonthPref(m, { hide }); rerender();
   });
   const fileName = () => `running-report-${m}.png`;
+  $('#rp-sheet').onclick = () => actionSheet(`${d.label} 리포트 공유`, [
+    { icon: '📤', label: '이미지로 공유', sub: '카카오톡·인스타그램 등', onClick: () => $('#rp-share-img').click() },
+    { icon: '🔗', label: $('#rp-link-box').dataset.url ? '공유 링크 업데이트' : '공유 링크 만들기', sub: '로그인 없이 볼 수 있는 페이지', onClick: () => $('#rp-link').click() },
+    { icon: '📝', label: '텍스트 복사', sub: '캡션·블로그용 요약', onClick: () => $('#rp-text').click() },
+    { icon: '💾', label: '이미지 저장', onClick: () => $('#rp-img').click() },
+  ]);
   $('#rp-img').onclick = async () => {
     await guard(async () => {
       const blob = await cardToBlob($('#report-card'));
@@ -1092,7 +1280,7 @@ function renderRaces() {
     return `<div class="race-item ${d < 0 ? 'past' : ''} pri-${esc(r.priority || 'A')}" data-id="${r.id}">
       <div class="race-d">${d > 0 ? `D-${d}` : d === 0 ? 'D-DAY' : '지남'}</div>
       <div class="race-info">
-        <div class="race-name">${esc(r.name)}${r.priority ? `<span class="tag">${PRIORITY[r.priority] || ''}</span>` : ''}${r.result_time ? `<span class="tag pb">결과 ${esc(r.result_time)}</span>` : ''}</div>
+        <div class="race-name">${esc(r.name)} ${d > 0 ? '<span class="sbadge plan">준비 중</span>' : d === 0 ? '<span class="sbadge warn">오늘 대회</span>' : r.result_time ? '<span class="sbadge done">완주</span>' : '<span class="sbadge miss">결과 미입력</span>'}${r.priority ? `<span class="tag">${PRIORITY[r.priority] || ''}</span>` : ''}${r.result_time ? `<span class="tag pb">결과 ${esc(r.result_time)}</span>` : ''}</div>
         <div class="race-sub">${r.date.replaceAll('-', '.')} (${WD[parse(r.date).getDay()]}) · ${esc(raceSummary(r))}${r.location ? ` · ${esc(r.location)}` : ''}</div>
         <div class="race-sub">훈련 계획 ${ps.n}개 (완료 ${ps.done}) · 계획 거리 ${ps.km.toFixed(0)}km</div>
         ${d < 0 && !r.result_time ? '<div class="race-sub" style="color:#c2410c">대회가 끝났어요. 결과 기록을 입력해 주세요.</div>' : ''}
@@ -1111,6 +1299,7 @@ function renderRaces() {
     on('edit', () => openRaceModal(r)); on('del', () => removeRace(r));
     on('plan', () => openPlanModal(r)); on('strategy', () => { state.strategyRace = r.id; switchView('strategy'); });
     on('result', () => openRaceModal(r, true)); on('clear', () => clearRacePlan(r));
+    swipeToDelete(el, async () => { await removeRace(r); if (state.races.includes(r)) renderRaces(); });
   });
   const up = upcomingRaces();
   const sel = $('#plan-race'); const prev = sel.value;
@@ -1140,6 +1329,14 @@ function openRaceModal(r = {}, resultMode = false) {
       <div class="full row gap"><button class="btn primary" type="submit">${isNew ? '추가' : '저장'}</button><button class="btn" type="button" id="r-cancel">취소</button></div>
     </form>`, body => {
     const f = $('#r-form', body);
+    const KNOWN = ['JTBC 서울마라톤', '서울마라톤 (동아마라톤)', '춘천마라톤', '경주국제마라톤', '대구마라톤', '인천마라톤', '고구려마라톤', '서울레이스', '손기정평화마라톤', '경기수원국제하프마라톤', '공주백제마라톤', '군산새만금마라톤', '부산바다마라톤', '상주곶감마라톤', '진주남강마라톤', '여수마라톤', '김포한강마라톤', '서울신문하프마라톤', '국민마라톤'];
+    autocomplete(f.name, q => {
+      const past = [...state.races].reverse().map(x => ({ label: x.name, sub: `${x.date} · ${distLabel(x.distance_km)}${x.result_time ? ` · 기록 ${x.result_time}` : ''}`, r: x }));
+      const seen = new Set(past.map(x => x.label));
+      const all = [...past, ...KNOWN.filter(n => !seen.has(n)).map(n => ({ label: n, sub: '자주 쓰는 대회' }))];
+      const ql = q.toLowerCase().replace(/\s/g, '');
+      return all.filter(x => !ql || x.label.toLowerCase().replace(/\s/g, '').includes(ql));
+    }, it => { if (it.r) { const k = String(it.r.distance_km); const o = [...f.dist_sel.options].find(op => Math.abs(Number(op.value) - Number(k)) < 0.01); if (o) f.dist_sel.value = o.value; if (it.r.location && !f.location.value) f.location.value = it.r.location; f.dist_sel.onchange?.(); } });
     const km = () => f.dist_sel.value === 'custom' ? Number(f.custom_km.value) : Number(f.dist_sel.value);
     const upd = () => {
       $('#r-custom', body).classList.toggle('hidden', f.dist_sel.value !== 'custom');
@@ -1217,18 +1414,24 @@ function openPlanModal(r) {
   const sk = recentWeeklyKm();
   openModal(`${r.name} 훈련 계획 만들기`, `
     <form id="pl-form" class="form-grid">
+      <div class="full" id="pl-steps">${stepperHTML(['기간·거리', '훈련 요일', '미리보기·적용'], 0)}</div>
       <div class="full muted" style="font-size:13px">${r.date} · ${esc(raceSummary(r))} · 대회까지 ${weeksLeft}주 (대회 주 포함)</div>
-      <label>전체 계획 기간<select name="weeks">${[12, 13, 14, 15, 16].map(n => `<option value="${n}" ${n === 16 ? 'selected' : ''}>${n}주</option>`).join('')}</select></label>
-      <label>시작일<input type="date" name="start" value="${defStart}"></label>
-      <label>현재 주간 거리 (km)<input type="number" name="startKm" min="10" max="200" value="${sk}"></label>
-      <label>피크 주간 거리 (km)<input type="number" name="peakKm" min="15" max="250" value="${Math.max(sk, defaultPeak(r))}"></label>
-      <div class="full"><div class="muted" style="font-size:13px;font-weight:600;margin-bottom:4px">훈련 요일</div>
-        <div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="pchip"><input type="checkbox" name="days" value="${d}" ${[2, 3, 4, 6, 0].includes(d) ? 'checked' : ''}><span>${DAY_NAMES[d]}</span></label>`).join('')}</div></div>
-      <label>장거리 요일<select name="longDay">${[0, 6, 5, 3].map(d => `<option value="${d}">${DAY_NAMES[d]}요일</option>`).join('')}</select></label>
-      <label>기존 예정 훈련<select name="mode"><option value="fill">빈 날짜만 채우기</option><option value="replace">이 기간 예정 훈련을 새 계획으로 교체</option></select></label>
-      ${prev ? `<label class="full" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="recover" checked style="width:auto"> 직전 대회(${esc(prev.name)} ${prev.date}) 후 10일 회복 기간 반영</label>` : ''}
-      <div class="full row gap"><button class="btn" type="button" id="pl-preview">미리보기</button><button class="btn primary" type="submit">캘린더에 넣기</button><button class="btn" type="button" id="pl-cancel">취소</button></div>
-      <div class="full" id="pl-out"></div>
+      <div class="full form-grid pl-step" data-s="0">
+        <label>전체 계획 기간<select name="weeks">${[12, 13, 14, 15, 16].map(n => `<option value="${n}" ${n === 16 ? 'selected' : ''}>${n}주</option>`).join('')}</select></label>
+        <label>시작일<input type="date" name="start" value="${defStart}"></label>
+        <label>현재 주간 거리 (km)<input type="number" name="startKm" min="10" max="200" value="${sk}"></label>
+        <label>피크 주간 거리 (km)<input type="number" name="peakKm" min="15" max="250" value="${Math.max(sk, defaultPeak(r))}"></label>
+        <p class="full muted" style="font-size:12px;margin:0">현재 주간 거리는 최근 4주 평균(${sk}km)으로 채웠어요.</p>
+      </div>
+      <div class="full form-grid pl-step hidden" data-s="1">
+        <div class="full"><div class="muted" style="font-size:13px;font-weight:600;margin-bottom:4px">훈련 요일</div>
+          <div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="pchip"><input type="checkbox" name="days" value="${d}" ${[2, 3, 4, 6, 0].includes(d) ? 'checked' : ''}><span>${DAY_NAMES[d]}</span></label>`).join('')}</div></div>
+        <label>장거리 요일<select name="longDay">${[0, 6, 5, 3].map(d => `<option value="${d}">${DAY_NAMES[d]}요일</option>`).join('')}</select></label>
+        <label>기존 예정 훈련<select name="mode"><option value="fill">빈 날짜만 채우기</option><option value="replace">이 기간 예정 훈련을 새 계획으로 교체</option></select></label>
+        ${prev ? `<label class="full" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="recover" checked style="width:auto"> 직전 대회(${esc(prev.name)} ${prev.date}) 후 10일 회복 기간 반영</label>` : ''}
+      </div>
+      <div class="full pl-step hidden" data-s="2"><div id="pl-out"></div></div>
+      <div class="full row gap wrap pl-nav"><button class="btn" type="button" id="pl-back">이전</button><button class="btn primary" type="button" id="pl-next">다음</button><button class="btn primary hidden" type="submit" id="pl-apply">캘린더에 넣기</button><button class="btn" type="button" id="pl-cancel">취소</button></div>
     </form>`, body => {
     const f = $('#pl-form', body);
     const build = () => {
@@ -1260,7 +1463,20 @@ function openPlanModal(r) {
         <p class="muted" style="font-size:12px">총 ${res.workouts.length}일 · 일반적인 원칙(주간 증가 10% 이내, 4주마다 회복주, 장거리 최대 32km)으로 만든 참고용 계획이에요. 몸 상태에 맞게 조정하세요.</p>`;
       return res;
     };
-    $('#pl-preview', body).onclick = show;
+    let step = 0;
+    const goStep = s => {
+      if (s === 2 && !show()) return;
+      step = s;
+      $('.pl-step', body).forEach(el => el.classList.toggle('hidden', +el.dataset.s !== s));
+      $('#pl-steps', body).innerHTML = stepperHTML(['기간·거리', '훈련 요일', '미리보기·적용'], s);
+      $('#pl-steps li', body).forEach(li => li.onclick = () => { if (+li.dataset.step < step) goStep(+li.dataset.step); });
+      $('#pl-back', body).classList.toggle('hidden', s === 0);
+      $('#pl-next', body).classList.toggle('hidden', s === 2);
+      $('#pl-apply', body).classList.toggle('hidden', s !== 2);
+    };
+    $('#pl-next', body).onclick = () => goStep(step + 1);
+    $('#pl-back', body).onclick = () => goStep(step - 1);
+    goStep(0);
     $('#pl-cancel', body).onclick = closeModal;
     f.onsubmit = async e => {
       e.preventDefault();
@@ -1377,7 +1593,7 @@ function renderStrategyView() {
 /* ---------- 공통 ---------- */
 function refresh() {
   renderHeader();
-  if (state.view === 'calendar') { renderCalendar(); renderDayPanel(); }
+  if (state.view === 'calendar') { renderCalendar(); renderBoard(); renderDayPanel(); }
   if (state.view === 'strategy') renderStrategyView();
   if (state.view === 'shoes') renderShoes();
   if (state.view === 'journal') renderJournal();
@@ -1385,7 +1601,8 @@ function refresh() {
 }
 function switchView(v) {
   state.view = v;
-  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
+  $('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
+  $('#bottom-tabs button[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   $$('.view').forEach(el => el.classList.toggle('hidden', el.id !== `view-${v}`));
   refresh();
 }
@@ -1483,6 +1700,20 @@ function bindStatic() {
     e.target.value = '';
   };
   $('#logout-btn').onclick = async () => { await store.signOut(); location.reload(); };
+  // 모바일 UI 패턴
+  $('#menu-btn').onclick = openDrawer;
+  $('#more-btn').onclick = openDrawer;
+  $('#fab').onclick = openAddSheet;
+  $('#bottom-tabs button[data-view]').forEach(b => b.onclick = () => { if (b.dataset.view === 'journal' && state.statTab === 'report') state.statTab = 'week'; switchView(b.dataset.view); window.scrollTo({ top: 0 }); });
+  $('#sum-seg button').forEach(b => b.onclick = () => { state.sumPeriod = b.dataset.k; renderMonthStats(); });
+  $('#cal-mode button').forEach(b => b.onclick = () => { state.calMode = b.dataset.k === 'board' ? 'board' : 'cal'; state.boardWeek = mondayOf(state.selected || todayIso()); renderBoard(); });
+  $('#board-prev').onclick = () => { state.boardWeek = addDaysIso(state.boardWeek, -7); renderBoard(); };
+  $('#board-next').onclick = () => { state.boardWeek = addDaysIso(state.boardWeek, 7); renderBoard(); };
+  $('#board-today').onclick = () => { state.boardWeek = mondayOf(todayIso()); renderBoard(); };
+  $('#journal-q').addEventListener('input', e => { state.journalQ = e.target.value; renderJournalList(); });
+  autocomplete($('#journal-q'), q => q ? titleSuggestions(q).filter(x => state.workouts.some(w => w.memo && w.title === x.label)) : [], it => { state.journalQ = it.label; renderJournalList(); });
+  sheetDrag($('.modal'), closeModal);
+  pullToRefresh(reloadData, { isEnabled: () => isMobile() && !$('#app').classList.contains('hidden') });
 }
 
 /* ---------- 인증 ---------- */
@@ -1520,6 +1751,7 @@ async function start() {
   if (!user) return showAuth();
   state.userEmail = user.email;
   $('#auth-view').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#month-stats').innerHTML = skeleton('stats'); $('#cal-grid').innerHTML = skeleton('calendar'); $('#day-panel').innerHTML = skeleton('panel');
   await loadAll();
   if (!state.races.length && DEFAULT_RACE?.race_date && !state.workouts.length) {
     try {

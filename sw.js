@@ -1,7 +1,7 @@
 // 서비스 워커: 오프라인 캐시 + 푸시 알림
-const CACHE = 'rc-v4';
+const CACHE = 'rc-v5';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'store.js', 'plan.js', 'zones.js', 'planner.js', 'stats.js', 'garmin.js',
-  'importers.js', 'garminExport.js', 'report.js', 'strategy.js', 'condition.js', 'config.js', 'manifest.json', 'icon-192.png', 'icon-512.png'];
+  'importers.js', 'garminExport.js', 'report.js', 'ui.js', 'strategy.js', 'condition.js', 'config.js', 'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
