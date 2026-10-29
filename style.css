@@ -550,3 +550,4 @@ main { max-width: 1240px; margin: 0 auto; padding: 16px; }
   .cal-head h2 { min-width: 0; font-size: 16px; }
 }
 @media (max-width: 400px) { .topbar .logo.sm { display: none; } }
+@media (max-width: 420px) { .rp-scale { zoom: .57; } .rp-preview { overflow: hidden; } }
