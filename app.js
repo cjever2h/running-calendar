@@ -858,7 +858,7 @@ function renderShoes() {
   const sf = state.shoeFilter || 'all';
   $('#shoe-chips').innerHTML = [['all', '전체'], ['active', '사용 중'], ['soon', '교체 임박'], ['replace', '교체 필요'], ['retired', '은퇴']]
     .map(([k, l]) => { const n = k === 'active' ? counts.ok + counts.soon + counts.replace : counts[k]; return n || k === 'all' ? `<button type="button" class="fchip ${sf === k ? 'on' : ''}" data-k="${k}">${l} <small>${n}</small></button>` : ''; }).join('');
-  $('#shoe-chips .fchip').forEach(b => b.onclick = () => { state.shoeFilter = b.dataset.k; renderShoes(); });
+  $$('#shoe-chips .fchip').forEach(b => b.onclick = () => { state.shoeFilter = b.dataset.k; renderShoes(); });
   const sorted = [...state.shoes].sort((a, b) => Number(a.retired) - Number(b.retired))
     .filter(s => { const k = shoeState(s).k; return sf === 'all' || (sf === 'active' ? k !== 'retired' : k === sf); });
   if (!sorted.length) { grid.innerHTML = '<div class="card empty" style="grid-column:1/-1">조건에 맞는 러닝화가 없어요.</div>'; renderShoeHistory(); return; }
@@ -1467,9 +1467,9 @@ function openPlanModal(r) {
     const goStep = s => {
       if (s === 2 && !show()) return;
       step = s;
-      $('.pl-step', body).forEach(el => el.classList.toggle('hidden', +el.dataset.s !== s));
+      $$('.pl-step', body).forEach(el => el.classList.toggle('hidden', +el.dataset.s !== s));
       $('#pl-steps', body).innerHTML = stepperHTML(['기간·거리', '훈련 요일', '미리보기·적용'], s);
-      $('#pl-steps li', body).forEach(li => li.onclick = () => { if (+li.dataset.step < step) goStep(+li.dataset.step); });
+      $$('#pl-steps li', body).forEach(li => li.onclick = () => { if (+li.dataset.step < step) goStep(+li.dataset.step); });
       $('#pl-back', body).classList.toggle('hidden', s === 0);
       $('#pl-next', body).classList.toggle('hidden', s === 2);
       $('#pl-apply', body).classList.toggle('hidden', s !== 2);
@@ -1601,8 +1601,8 @@ function refresh() {
 }
 function switchView(v) {
   state.view = v;
-  $('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
-  $('#bottom-tabs button[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
+  $$('#bottom-tabs button[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   $$('.view').forEach(el => el.classList.toggle('hidden', el.id !== `view-${v}`));
   refresh();
 }
@@ -1704,9 +1704,9 @@ function bindStatic() {
   $('#menu-btn').onclick = openDrawer;
   $('#more-btn').onclick = openDrawer;
   $('#fab').onclick = openAddSheet;
-  $('#bottom-tabs button[data-view]').forEach(b => b.onclick = () => { if (b.dataset.view === 'journal' && state.statTab === 'report') state.statTab = 'week'; switchView(b.dataset.view); window.scrollTo({ top: 0 }); });
-  $('#sum-seg button').forEach(b => b.onclick = () => { state.sumPeriod = b.dataset.k; renderMonthStats(); });
-  $('#cal-mode button').forEach(b => b.onclick = () => { state.calMode = b.dataset.k === 'board' ? 'board' : 'cal'; state.boardWeek = mondayOf(state.selected || todayIso()); renderBoard(); });
+  $$('#bottom-tabs button[data-view]').forEach(b => b.onclick = () => { if (b.dataset.view === 'journal' && state.statTab === 'report') state.statTab = 'week'; switchView(b.dataset.view); window.scrollTo({ top: 0 }); });
+  $$('#sum-seg button').forEach(b => b.onclick = () => { state.sumPeriod = b.dataset.k; renderMonthStats(); });
+  $$('#cal-mode button').forEach(b => b.onclick = () => { state.calMode = b.dataset.k === 'board' ? 'board' : 'cal'; state.boardWeek = mondayOf(state.selected || todayIso()); renderBoard(); });
   $('#board-prev').onclick = () => { state.boardWeek = addDaysIso(state.boardWeek, -7); renderBoard(); };
   $('#board-next').onclick = () => { state.boardWeek = addDaysIso(state.boardWeek, 7); renderBoard(); };
   $('#board-today').onclick = () => { state.boardWeek = mondayOf(todayIso()); renderBoard(); };
