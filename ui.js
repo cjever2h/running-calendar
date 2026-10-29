@@ -117,7 +117,7 @@ export function swipeToDelete(row, onDelete, { label = '삭제' } = {}) {
   const W = 84; let x0 = null, y0 = null, dx = 0, open = false, horiz = null;
   const set = x => { inner.style.transform = x ? `translateX(${x}px)` : ''; };
   const closeAll = () => document.querySelectorAll('.swipe-row.open').forEach(r => { if (r !== row) { r.classList.remove('open'); r.querySelector('.swipe-inner').style.transform = ''; } });
-  inner.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.button !== 0) return; x0 = e.clientX; y0 = e.clientY; dx = 0; horiz = null; inner.style.transition = 'none'; });
+  inner.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') { if (e.button !== 0) return; e.preventDefault(); } x0 = e.clientX; y0 = e.clientY; dx = 0; horiz = null; inner.style.transition = 'none'; });
   inner.addEventListener('pointermove', e => {
     if (x0 == null) return;
     const mx = e.clientX - x0, my = e.clientY - y0;
@@ -134,7 +134,8 @@ export function swipeToDelete(row, onDelete, { label = '삭제' } = {}) {
     }
     x0 = null;
   };
-  inner.addEventListener('pointerup', end); inner.addEventListener('pointercancel', end);
+  inner.addEventListener('pointerup', end);
+  inner.addEventListener('pointercancel', () => { if (x0 == null) return; inner.style.transition = ''; set(open ? -W : 0); x0 = null; horiz = null; });
   // 밀다가 놓았을 때 클릭으로 처리되지 않도록
   inner.addEventListener('click', e => { if (horiz || open) { e.stopPropagation(); e.preventDefault(); if (open && !horiz) { open = false; row.classList.remove('open'); set(0); } horiz = null; } }, true);
   del.addEventListener('click', e => { e.stopPropagation(); onDelete(); });
