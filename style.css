@@ -535,3 +535,18 @@ main { max-width: 1240px; margin: 0 auto; padding: 16px; }
   .stepper li span { font-size: 11px; }
 }
 @keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+
+@media (max-width: 760px) {
+  .topbar { gap: 8px; padding: 10px 12px; }
+  .topbar .brand { min-width: 0; flex: 1; }
+  .topbar .brand > div:last-child { min-width: 0; }
+  .brand-sub { max-width: none; }
+  .dday { flex-shrink: 0; max-width: 92px; }
+  .dday small { max-width: 92px; }
+  .seg-row { flex-direction: column; align-items: stretch; gap: 6px; }
+  .seg-row .seg-tabs button { white-space: nowrap; padding: 7px 6px; }
+  .cal-head { flex-wrap: nowrap; }
+  .cal-head .btn.sm { white-space: nowrap; padding: 5px 8px; font-size: 12px; }
+  .cal-head h2 { min-width: 0; font-size: 16px; }
+}
+@media (max-width: 400px) { .topbar .logo.sm { display: none; } }
