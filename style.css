@@ -801,3 +801,7 @@ html[data-theme="dark"] .gr-mt em.up { color: #4ade80; } html[data-theme="dark"]
   .gr-mts { grid-template-columns: repeat(2, 1fr); }
   .gr-mt b { font-size: 19px; }
 }
+@media (max-width: 560px) {
+  .gr { --cs: 12px; }
+  .gr-hmwrap { overflow-y: hidden; }
+}
