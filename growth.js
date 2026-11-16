@@ -1,6 +1,6 @@
 // 통계 > 성장: 연속 달리기·러닝 흐름·유형별 강도·같은 페이스 심박·지표 추세·습관·PR·나의 여정
 import { toSec, fmtPace, fmtDuration } from './plan.js';
-import { esc, parse, iso, addDays, mondayOf, isRunDone, kmOf, paceSec, startOf, typeLabel, rpeColor, rpeText, rpeName, isDark } from './runview.js';
+import { TYPE_RPE, esc, parse, iso, addDays, mondayOf, isRunDone, kmOf, paceSec, startOf, typeLabel, rpeColor, rpeText, rpeName, isDark } from './runview.js';
 
 const pad = n => String(n).padStart(2, '0');
 const median = a => { const s = [...a].sort((x, y) => x - y); const n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
@@ -66,7 +66,7 @@ export function renderGrowth(root, { workouts, logs, races, today, flowOffset = 
   const hrs = fr.map(w => w.avg_hr).filter(Boolean); const hMin = Math.min(...hrs, 200) - 5, hMax = Math.max(...hrs, 0) + 5;
   const hY = h => T + (1 - (h - hMin) / (hMax - hMin || 1)) * (H - T - B) * .55;
   const bw = Math.max(5, (W - L - R) / 30 * .6);
-  const bars = fr.map(w => { const c = rpeColor(w.rpe) || (isDark() ? '#475569' : '#cbd5e1'); return `<rect class="gr-bar" data-id="${w.id}" x="${(xd(w.date) - bw / 2).toFixed(1)}" y="${kmY(kmOf(w)).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - B - kmY(kmOf(w))).toFixed(1)}" rx="3" fill="${c}" opacity=".88"><title>${w.date} ${w.title} ${kmOf(w).toFixed(1)}km${paceSec(w) ? ' ' + fmtPace(paceSec(w)) : ''}${w.avg_hr ? ' ' + w.avg_hr + 'bpm' : ''}${w.rpe ? ' 강도' + w.rpe : ''}</title></rect>`; }).join('');
+  const bars = fr.map(w => { const est = !w.rpe && TYPE_RPE[w.type]; const c = rpeColor(w.rpe || TYPE_RPE[w.type]) || (isDark() ? '#475569' : '#cbd5e1'); return `<rect class="gr-bar" data-id="${w.id}" opacity="${est ? .45 : .9}" x="${(xd(w.date) - bw / 2).toFixed(1)}" y="${kmY(kmOf(w)).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - B - kmY(kmOf(w))).toFixed(1)}" rx="3" fill="${c}"><title>${w.date} ${w.title} ${kmOf(w).toFixed(1)}km${paceSec(w) ? ' ' + fmtPace(paceSec(w)) : ''}${w.avg_hr ? ' ' + w.avg_hr + 'bpm' : ''}${w.rpe ? ' 강도' + w.rpe : ''}</title></rect>`; }).join('');
   const pp = fr.filter(paceSec).map(w => `${xd(w.date).toFixed(1)},${pY(paceSec(w)).toFixed(1)}`);
   const hp = fr.filter(w => w.avg_hr).map(w => `${xd(w.date).toFixed(1)},${hY(w.avg_hr).toFixed(1)}`);
   const ticks = [0, 7, 14, 21, 29].map(k => addDays(fStart, k));
@@ -105,11 +105,12 @@ export function renderGrowth(root, { workouts, logs, races, today, flowOffset = 
     const idx = vals.map((v, i) => v != null ? i : -1).filter(i => i >= 0);
     if (!idx.length) return `<div class="gr-mt"><span>${label}</span><p class="muted">데이터 없음</p></div>`;
     const last = vals[idx[idx.length - 1]], prevV = idx.length > 1 ? vals[idx[idx.length - 2]] : null;
-    const d = prevV != null ? last - prevV : null;
+    let d = prevV != null ? last - prevV : null;
+    if (d != null && Math.abs(d) < (unit === 'pace' ? 1 : Math.abs(last) < 20 ? 0.05 : 0.5)) d = 0;
     const better = d == null || Math.abs(d) < 1e-9 ? null : lowerBetter ? d < 0 : d > 0;
     const fmt = v => unit === 'pace' ? fmtPace(v) : unit === 'm' ? v.toFixed(2) : Math.abs(v) < 20 ? v.toFixed(1) : Math.round(v);
     return `<div class="gr-mt"><span>${label}</span><b>${fmt(last)}<small>${unit === 'pace' ? '/km' : unit}</small></b>
-      <em class="${better == null ? '' : better ? 'up' : 'down'}">${d == null ? '' : `${d > 0 ? '+' : '−'}${unit === 'pace' ? Math.abs(Math.round(d)) + '초' : fmt(Math.abs(d))} · 직전 기록 주 대비`}</em>
+      <em class="${better == null ? '' : better ? 'up' : 'down'}">${d == null ? '' : d === 0 ? '변화 없음' : `${d > 0 ? '+' : '−'}${unit === 'pace' ? Math.abs(Math.round(d)) + '초' : fmt(Math.abs(d))} · 직전 기록 주 대비`}</em>
       ${spark(vals, color)}<small class="gr-mt-w">마지막 ${short(wk12[idx[idx.length - 1]])} 주</small></div>`;
   };
   const tiles = [
@@ -181,7 +182,7 @@ export function renderGrowth(root, { workouts, logs, races, today, flowOffset = 
         <div class="gr-sub">평균 ${paces.length ? fmtPace(paces.reduce((s, p) => s + p, 0) / paces.length) : '-'} · 가장 빠른 ${paces.length ? fmtPace(Math.min(...paces)) : '-'}</div></div>
         <div class="gr-right"><span>거리</span><b>${fKm.toFixed(1)} km · ${fr.length}회</b></div></div>
       ${flowSvg}
-      <div class="gr-key"><span><i style="background:${acc}"></i>페이스</span><span><i style="background:#f43f5e"></i>평균 심박 ${hrPrev && hrNow ? `그 전 ${hrPrev} → ${hrNow}` : hrNow ? hrNow : ''}</span><span class="muted">막대 = 거리(색 = 강도)</span></div>
+      <div class="gr-key"><span><i style="background:${acc}"></i>페이스</span><span><i style="background:#f43f5e"></i>평균 심박 ${hrPrev && hrNow ? `그 전 ${hrPrev} → ${hrNow}` : hrNow ? hrNow : ''}</span><span class="muted">막대 = 거리(색 = 강도, 연한 막대는 강도 미입력이라 훈련 종류로 추정)</span></div>
       <p class="gr-msg">✦ ${short(fStart)}~${short(fEnd)} · ${fr.length}회 · ${fKm.toFixed(0)} km${fr.length ? ` · 쉬운 날 ${Math.round(easyN / fr.length * 100)}%` : ''}<br><b>${flowMsg}</b></p>
     </div>
 

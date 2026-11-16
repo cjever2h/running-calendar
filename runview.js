@@ -15,6 +15,8 @@ const NEON_LIGHT = ['#1f5ae6', '#0098d9', '#00bfcc', '#00cc80', '#5fcc00', '#b8c
 export const isDark = () => document.documentElement.dataset.theme === 'dark';
 export const rpeColors = () => isDark() ? NEON : NEON_LIGHT;
 export const rpeColor = n => n ? rpeColors()[Math.min(10, Math.max(1, Math.round(n))) - 1] : null;
+/** 강도 미입력 시 훈련 종류로 추정 */
+export const TYPE_RPE = { recovery: 2, easy: 3, long: 5, hill: 6, mp: 6, tempo: 7, interval: 8, race: 9 };
 export const rpeName = n => !n ? '-' : n <= 3 ? '쉬움' : n <= 6 ? '보통' : n <= 8 ? '힘듦' : '전력';
 /** 라이트 모드에서 글자로 쓸 때 더 진하게 */
 export const rpeText = n => { const c = rpeColor(n); if (!c || isDark()) return c; const k = [1, 2, 3, 4, 5, 6].includes(Math.round(n)) ? .72 : .9; return shade(c, k); };
@@ -54,7 +56,7 @@ export function runInsight(w, all, logs, races) {
   const ps = paceSec(w);
   if (same.length >= 3 && ps) {
     const avg = same.reduce((s, x) => s + paceSec(x), 0) / same.length; const diff = Math.round(avg - ps);
-    out.lines.push({ dot: diff >= 0 ? '#22c55e' : '#f59e0b', label: '페이스', text: `최근 90일 ${typeLabel(w.type)} 평균 ${fmtPace(avg)} 대비 ${Math.abs(diff)}초 ${diff >= 0 ? '빠름' : '느림'}` });
+    out.lines.push({ dot: diff >= 0 ? '#22c55e' : '#f59e0b', label: '페이스', text: Math.abs(diff) < 3 ? `최근 90일 ${typeLabel(w.type)} 평균 ${fmtPace(avg)}와 비슷` : `최근 90일 ${typeLabel(w.type)} 평균 ${fmtPace(avg)} 대비 ${Math.abs(diff)}초 ${diff >= 0 ? '빠름' : '느림'}` });
   }
   if (ratio) out.lines.push({ dot: ratio > 1.3 ? '#f59e0b' : ratio < .75 ? '#3b82f6' : '#22c55e', label: '훈련 부하', text: `최근 7일 ${acute.toFixed(0)}km · 4주 주평균 ${chronic.toFixed(0)}km (${ratio.toFixed(2)}배)` });
   const log = logs.find(l => l.date === d);
