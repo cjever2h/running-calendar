@@ -7,6 +7,8 @@ import { TYPES, SHOE_PURPOSES, RACE_DISTANCES, PRIORITY, distLabel, racePace, pa
 import { paceZones, hrZones, zoneText, TYPE_ZONE } from './zones.js';
 import { generatePlan, weeklyLoad, PHASES, DAY_NAMES, phaseSplit } from './planner.js';
 import { parseFile } from './importers.js';
+import { renderRunView, runCardHTML } from './runview.js';
+import { renderGrowth } from './growth.js';
 import { isMobile, sheetDrag, actionSheet, drawer, pullToRefresh, swipeToDelete, autocomplete, stepperHTML, skeleton } from './ui.js';
 import { isActivitiesExport, isGearExport, parseActivities, parseGear, matchShoe, gearToShoe } from './garminExport.js';
 import { renderStrategy } from './strategy.js';
@@ -24,7 +26,7 @@ const state = {
   selected: null, // 'YYYY-MM-DD'
   view: 'calendar',
   shoeFocus: null,
-  statTab: 'week',
+  statTab: 'grow', runId: null, backView: 'calendar', flowOffset: 0,
   statRange: { week: 'w12', month: 'm6', type: 'w12', cum: 'all', heat: 'y', cond: 'w12' },
   importQueue: [],
   sumPeriod: 'month', calMode: 'cal', boardWeek: null, journalFilter: 'all', journalQ: '', shoeFilter: 'all',
@@ -191,6 +193,7 @@ function renderBoard() {
         { icon: '✓', label: '완료로 옮기기', onClick: () => setWorkoutStatus(w, 'done') },
         { icon: '✗', label: '미완료로 옮기기', onClick: () => setWorkoutStatus(w, 'skipped') },
         { icon: '○', label: '예정으로 옮기기', onClick: () => setWorkoutStatus(w, 'planned') },
+        { icon: '🏃', label: '오늘의 러닝 보기', onClick: () => openRun(w.id) },
         { icon: '↗', label: '날짜 상세 보기', onClick: () => { state.calMode = 'cal'; selectDate(w.date, true); } },
       ]);
     });
@@ -214,7 +217,8 @@ function openDrawer() {
       { icon: '📅', label: '캘린더', active: state.view === 'calendar', onClick: go('calendar') },
       { icon: '🏁', label: '대회 전략', active: state.view === 'strategy', onClick: go('strategy') },
       { icon: '👟', label: '러닝화', active: state.view === 'shoes', onClick: go('shoes') },
-      { icon: '📊', label: '통계·일지', active: state.view === 'journal' && state.statTab !== 'report', onClick: () => { state.statTab = state.statTab === 'report' ? 'week' : state.statTab; switchView('journal'); } },
+      { icon: '📊', label: '통계·일지', active: state.view === 'journal' && state.statTab !== 'report', onClick: () => { state.statTab = state.statTab === 'report' ? 'grow' : state.statTab; switchView('journal'); } },
+      { icon: '🌓', label: `화면 모드: ${{ auto: '자동', light: '라이트', dark: '다크' }[localStorage.getItem('rc-theme') || 'auto']}`, onClick: cycleTheme },
       { icon: '🖼', label: '월간 리포트 (공유)', active: state.view === 'journal' && state.statTab === 'report', onClick: () => { state.statTab = 'report'; switchView('journal'); } },
       { icon: '⚙', label: '설정', active: state.view === 'settings', onClick: go('settings') },
     ] },
@@ -440,6 +444,7 @@ function workoutCard(w) {
     ${(w.images || []).length ? `<div class="w-images">${w.images.map((p, i) => `<button type="button" class="thumb" data-i="${i}" title="크게 보기"><img data-path="${esc(p)}" alt="러닝 기록 이미지"></button>`).join('')}</div>` : ''}
     <div class="w-actions">
       <button class="btn sm" data-act="edit">계획 수정</button>
+      ${w.type !== 'rest' ? '<button class="btn sm primary" data-act="detail">오늘의 러닝 보기</button>' : ''}
       <button class="btn sm" data-act="move">이동·복사</button>
       <label class="btn sm">기록 이미지 추가<input type="file" accept="image/*" data-act="img" hidden></label>
       <button class="btn sm danger" data-act="del">삭제</button>
@@ -696,6 +701,7 @@ function renderDayPanel() {
     });
     $('[data-act=edit]', card).onclick = () => openWorkoutModal(w);
     $('[data-act=move]', card).onclick = () => openMoveModal(w);
+    $('[data-act=detail]', card)?.addEventListener('click', () => openRun(w.id));
     $('[data-act=img]', card).onchange = e => { const fl = e.target.files; if (fl?.length) enqueueImports(fl, w); e.target.value = ''; };
     $$('.thumb', card).forEach(b => b.onclick = () => openImageViewer(w, Number(b.dataset.i)));
     $('[data-act=del]', card).onclick = async () => {
@@ -952,9 +958,17 @@ function openShoeModal(s = {}) {
 function renderJournal() {
   const tab = state.statTab, range = state.statRange[tab];
   $$('#stat-tabs button').forEach(b => b.classList.toggle('on', b.dataset.k === tab));
-  const isReport = tab === 'report';
-  $('#view-journal').classList.toggle('report-mode', isReport);
+  const isReport = tab === 'report', isGrow = tab === 'grow';
+  $('#view-journal').classList.toggle('report-mode', isReport || isGrow);
+  $('#report-view').classList.toggle('hidden', !isReport);
+  $('#grow-view').classList.toggle('hidden', !isGrow);
   if (isReport) renderReport();
+  else if (isGrow) renderGrowth($('#grow-view'), {
+    workouts: state.workouts, logs: state.logs, races: state.races, today: todayIso(), flowOffset: state.flowOffset,
+    onShift: n => { state.flowOffset = n; renderJournal(); },
+    onPick: d => { switchView('calendar'); selectDate(d, true); },
+    onRun: id => openRun(id),
+  });
   else {
   $('#stat-range').innerHTML = Object.entries(RANGES).map(([k, v]) => `<option value="${k}" ${k === range ? 'selected' : ''}>${v}</option>`).join('');
   $('#view-journal .chart-row').classList.add('loading');
@@ -986,7 +1000,7 @@ function renderJournalList() {
       <div class="e-memo">${esc(w.memo)}</div></div>`;
   }).join('') : `<div class="empty">${all.length ? '조건에 맞는 메모가 없어요.' : '아직 작성한 메모가 없어요. 캘린더에서 날짜를 눌러 느낀 점을 남겨보세요.'}</div>`;
   $$('#journal-list .entry').forEach(el => {
-    el.onclick = () => { switchView('calendar'); selectDate(el.dataset.date, true); };
+    el.onclick = () => openRun(el.dataset.id);
     const w = state.workouts.find(x => x.id === el.dataset.id);
     swipeToDelete(el, async () => {
       if (!confirm(`${korDate(w.date)} '${w.title}'의 메모를 삭제할까요? (훈련 기록은 남아요)`)) { renderJournalList(); return; }
@@ -1597,6 +1611,54 @@ function renderStrategyView() {
   });
 }
 
+/* ---------- 오늘의 러닝 ---------- */
+function openRun(id) {
+  if (state.view !== 'run') state.backView = state.view;
+  state.runId = id;
+  switchView('run');
+  window.scrollTo({ top: 0 });
+}
+function renderRun() {
+  const w = state.workouts.find(x => x.id === state.runId);
+  const root = $('#run-view');
+  renderRunView(root, { w, all: state.workouts, shoes: state.shoes, races: state.races, logs: state.logs, imgUrl: store.imageUrl });
+  if (!w) return;
+  $('#rv-back').onclick = () => switchView(state.backView === 'run' ? 'calendar' : state.backView);
+  $('#rv-edit').onclick = () => { state.selected = w.date; state.month = new Date(+w.date.slice(0, 4), +w.date.slice(5, 7) - 1, 1); switchView('calendar'); selectDate(w.date, true); };
+  $$('#rv-rpe button').forEach(b => b.onclick = async () => {
+    const v = +b.dataset.v;
+    await guard(() => saveW({ ...w, rpe: v }), `운동 강도 ${v}로 저장했어요`);
+  });
+  $$('#run-view .thumb').forEach(b => b.onclick = () => openImageViewer(w, Number(b.dataset.i)));
+  $('#rv-card').onclick = () => openRunCard(w);
+}
+function openRunCard(w) {
+  openModal('러닝 카드', `<div class="rp-preview"><div class="rp-scale">${runCardHTML(w, state.workouts, state.logs, state.races)}</div></div>
+    <div class="row gap wrap" style="margin-top:12px"><button class="btn primary" id="rc-share">이미지 공유</button><button class="btn" id="rc-save">이미지 저장</button></div>`, body => {
+    const name = `run-${w.date}.png`;
+    $('#rc-save', body).onclick = () => guard(async () => { const blob = await cardToBlob($('#run-card')); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }, '이미지를 저장했어요');
+    $('#rc-share', body).onclick = async () => {
+      try { const blob = await cardToBlob($('#run-card')); const file = new File([blob], name, { type: 'image/png' });
+        if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: w.title }); else $('#rc-save', body).click();
+      } catch (e) { if (e.name !== 'AbortError') toast('공유 실패: ' + e.message); }
+    };
+  }, true);
+}
+
+/* ---------- 화면 모드 (자동·라이트·다크) ---------- */
+function applyTheme() {
+  const pref = localStorage.getItem('rc-theme') || 'auto';
+  const dark = pref === 'dark' || (pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', dark ? '#0a0e17' : '#0f172a');
+}
+function cycleTheme() {
+  const order = ['auto', 'light', 'dark'], cur = localStorage.getItem('rc-theme') || 'auto';
+  const next = order[(order.indexOf(cur) + 1) % 3];
+  localStorage.setItem('rc-theme', next); applyTheme(); refresh();
+  toast({ auto: '화면 모드: 휴대폰 설정 따라가기', light: '화면 모드: 라이트', dark: '화면 모드: 다크' }[next]);
+}
+
 /* ---------- 공통 ---------- */
 function refresh() {
   renderHeader();
@@ -1605,11 +1667,13 @@ function refresh() {
   if (state.view === 'shoes') renderShoes();
   if (state.view === 'journal') renderJournal();
   if (state.view === 'settings') renderSettings();
+  if (state.view === 'run') renderRun();
 }
 function switchView(v) {
   state.view = v;
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
-  $$('#bottom-tabs button[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  const navV = v === 'run' ? (state.backView || 'calendar') : v;
+  $$('#bottom-tabs button[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === navV));
   $$('.view').forEach(el => el.classList.toggle('hidden', el.id !== `view-${v}`));
   refresh();
 }
@@ -1711,7 +1775,7 @@ function bindStatic() {
   $('#menu-btn').onclick = openDrawer;
   $('#more-btn').onclick = openDrawer;
   $('#fab').onclick = openAddSheet;
-  $$('#bottom-tabs button[data-view]').forEach(b => b.onclick = () => { if (b.dataset.view === 'journal' && state.statTab === 'report') state.statTab = 'week'; switchView(b.dataset.view); window.scrollTo({ top: 0 }); });
+  $$('#bottom-tabs button[data-view]').forEach(b => b.onclick = () => { if (b.dataset.view === 'journal' && state.statTab === 'report') state.statTab = 'grow'; switchView(b.dataset.view); window.scrollTo({ top: 0 }); });
   $$('#sum-seg button').forEach(b => b.onclick = () => { state.sumPeriod = b.dataset.k; renderMonthStats(); });
   $$('#cal-mode button').forEach(b => b.onclick = () => { state.calMode = b.dataset.k === 'board' ? 'board' : 'cal'; state.boardWeek = mondayOf(state.selected || todayIso()); renderBoard(); });
   $('#board-prev').onclick = () => { state.boardWeek = addDaysIso(state.boardWeek, -7); renderBoard(); };
@@ -1779,6 +1843,8 @@ async function start() {
 }
 
 (async function main() {
+  applyTheme();
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { applyTheme(); refresh(); });
   bindStatic();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
   try { await store.init(); store.onPasswordRecovery(() => openPasswordModal('새 비밀번호 설정')); }

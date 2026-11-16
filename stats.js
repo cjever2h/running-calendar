@@ -54,6 +54,7 @@ function destroyCharts() { while (charts.length) charts.pop().destroy(); }
 const paceTick = v => fmtPace(v);
 async function makeChart(canvas, config) {
   const Chart = await loadChart();
+  const cs = getComputedStyle(document.documentElement); Chart.defaults.color = cs.getPropertyValue('--muted').trim() || '#64748b'; Chart.defaults.borderColor = cs.getPropertyValue('--line').trim() || '#e2e8f0';
   const c = new Chart(canvas, config);
   charts.push(c);
   return c;
