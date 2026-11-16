@@ -783,3 +783,21 @@ html[data-theme="dark"] .gr-mt em.up { color: #4ade80; } html[data-theme="dark"]
 @media (max-width: 560px) { .gr-4 { grid-template-columns: repeat(2, 1fr); } .gr-flow { height: 180px; } .gr-pr b { font-size: 25px; } }
 
 .gr-hmwrap { max-width: 560px; }
+
+/* v6 모바일 보정 */
+#stat-tabs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+#stat-tabs button { white-space: nowrap; flex: 0 0 auto; }
+.section-head.wrap > .row { max-width: 100%; min-width: 0; }
+.gr-flow, .gr-line { width: 100%; height: auto; max-width: 100%; }
+.gr { --cs: 22px; }
+.gr-hm { grid-template-columns: repeat(18, var(--cs)); flex: none; }
+.gr-col, .gr-hm-days { grid-template-rows: 14px repeat(7, var(--cs)); }
+.gr-hm i { width: var(--cs); height: var(--cs); aspect-ratio: auto; }
+@media (max-width: 560px) {
+  .gr { --cs: 14px; }
+  .gr-hm, .gr-col { gap: 2px; } .gr-hm-days { gap: 2px; }
+  .gr-prs { grid-template-columns: repeat(2, 1fr); }
+  .gr-pr { padding: 12px; }
+  .gr-mts { grid-template-columns: repeat(2, 1fr); }
+  .gr-mt b { font-size: 19px; }
+}

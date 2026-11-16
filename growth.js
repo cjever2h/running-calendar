@@ -58,7 +58,7 @@ export function renderGrowth(root, { workouts, logs, races, today, flowOffset = 
   const paces = fr.map(paceSec).filter(Boolean);
   const hrAvg = l => { const h = l.filter(w => w.avg_hr); return h.length ? Math.round(h.reduce((s, w) => s + w.avg_hr, 0) / h.length) : null; };
   const easyN = fr.filter(w => (w.rpe ? w.rpe <= 4 : ['easy', 'recovery', 'long'].includes(w.type))).length;
-  const W = 640, H = 210, L = 40, R = 34, T = 14, B = 26;
+  const W = Math.round(Math.max(300, Math.min(760, (root.clientWidth || 640) - 34))), H = W < 480 ? 190 : 220, L = 40, R = 34, T = 14, B = 26;
   const xd = d => L + (Math.round((parse(d) - parse(fStart)) / 86400000) + .5) * (W - L - R) / 30;
   const maxKm = Math.max(10, ...fr.map(kmOf)); const kmY = k => H - B - k / maxKm * (H - T - B);
   const pMin = paces.length ? Math.min(...paces) - 10 : 280, pMax = paces.length ? Math.max(...paces) + 10 : 420;
@@ -70,7 +70,7 @@ export function renderGrowth(root, { workouts, logs, races, today, flowOffset = 
   const pp = fr.filter(paceSec).map(w => `${xd(w.date).toFixed(1)},${pY(paceSec(w)).toFixed(1)}`);
   const hp = fr.filter(w => w.avg_hr).map(w => `${xd(w.date).toFixed(1)},${hY(w.avg_hr).toFixed(1)}`);
   const ticks = [0, 7, 14, 21, 29].map(k => addDays(fStart, k));
-  const flowSvg = `<svg viewBox="0 0 ${W} ${H}" class="gr-flow" preserveAspectRatio="none">
+  const flowSvg = `<svg viewBox="0 0 ${W} ${H}" class="gr-flow" width="${W}" height="${H}">
     <line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" class="gr-axis"/>
     ${bars}
     ${pp.length > 1 ? `<polyline points="${pp.join(' ')}" fill="none" stroke="${acc}" stroke-width="2.4" stroke-linejoin="round"/>${pp.map(p => `<circle cx="${p.split(',')[0]}" cy="${p.split(',')[1]}" r="3" fill="${acc}"/>`).join('')}` : ''}
@@ -194,12 +194,12 @@ export function renderGrowth(root, { workouts, logs, races, today, flowOffset = 
     <div class="card gr-card">
       <h3>같은 페이스 심박</h3>
       ${rv.length >= 2 ? (() => {
-        const lo = Math.min(...rv) - 2, hi = Math.max(...rv) + 2, Wd = 600, Hd = 120;
+        const lo = Math.min(...rv) - 2, hi = Math.max(...rv) + 2, Wd = W, Hd = 130;
         const x = i => 10 + i * (Wd - 20) / (roll.length - 1), y = v => 8 + (1 - (v - lo) / (hi - lo)) * (Hd - 24);
         const pts = roll.map((v, i) => ({ i, v }));
         return `<div class="gr-big"><b>${Math.round(roll[lastI])}bpm</b><span>5'45"~6'05" 이지런 · 최근 4주 중앙값</span></div>
         <div class="gr-sub">${short(wks[firstI])} 주 ${Math.round(roll[firstI])} → ${short(wks[lastI])} 주 ${Math.round(roll[lastI])} · 같은 페이스에서 심박이 낮아지면 같은 노력으로 더 빨리 달릴 수 있다는 뜻이에요.</div>
-        <svg viewBox="0 0 ${Wd} ${Hd}" class="gr-line" preserveAspectRatio="none"><path d="${linePath(pts, x, y)}" fill="none" stroke="#f43f5e" stroke-width="2.5"/>
+        <svg viewBox="0 0 ${Wd} ${Hd}" class="gr-line" width="${Wd}" height="${Hd}"><path d="${linePath(pts, x, y)}" fill="none" stroke="#f43f5e" stroke-width="2.5"/>
         ${wks.map((m, i) => (wkMap[m] || []).map(v => `<circle cx="${x(i)}" cy="${y(Math.min(hi, Math.max(lo, v)))}" r="2.5" fill="#f43f5e" opacity=".35"/>`).join('')).join('')}
         <text x="${Wd - 4}" y="${Hd - 4}" text-anchor="end" class="gr-tk">${short(wks[wks.length - 1])}</text><text x="4" y="${Hd - 4}" class="gr-tk">${short(wks[0])}</text></svg>
         <p class="muted gr-small">점: 해당 주 러닝 평균 심박 · 선: 최근 4주(3회 이상) 중앙값 · 인터벌·템포·대회·트레일 제외 · 더위·피로·수면에 따라 몇 bpm씩 흔들려요</p>`;
