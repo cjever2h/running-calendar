@@ -1022,7 +1022,7 @@ function planGarminImport(acts, gear, opts) {
   acts = acts.filter(a => !seen.has(a.garminId) && seen.add(a.garminId)).sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start));
   const byGid = new Map(state.workouts.filter(w => w.garmin_id).map(w => [Number(w.garmin_id), w]));
   const used = new Set();
-  const plan = { add: [], merge: [], complete: [], skip: [], cross: 0, races: [] };
+  const plan = { add: [], merge: [], complete: [], skip: [], enrich: [], cross: 0, races: [] };
   // 러닝화 매칭
   const gearShoe = new Map(), newShoes = [];
   if (gear) for (const g of gear.gears) {
@@ -1034,7 +1034,7 @@ function planGarminImport(acts, gear, opts) {
   for (const a of acts) {
     if (a.kind === 'cross' && !opts.cross) continue;
     if (a.kind === 'cross') plan.cross++;
-    if (byGid.has(a.garminId)) { plan.skip.push(a); continue; }
+    if (byGid.has(a.garminId)) { const ex = byGid.get(a.garminId); if (!ex.metrics && a.metrics) plan.enrich.push({ a, w: ex }); else plan.skip.push(a); continue; }
     const day = state.workouts.filter(w => w.date === a.date && !used.has(w.id));
     const tsec = Math.round(a.sec || 0);
     const same = a.kind === 'run' && day.find(w => w.status === 'done' && !w.garmin_id && (
@@ -1075,7 +1075,7 @@ function openGarminImport(acts, gear, errs = []) {
         <div class="stat"><div class="k">새로 추가</div><div class="v">${P.add.length}<small> 개</small></div></div>
         <div class="stat"><div class="k">기존 기록 보강</div><div class="v">${P.merge.length}<small> 개</small></div></div>
         <div class="stat"><div class="k">계획 → 완료 처리</div><div class="v">${P.complete.length}<small> 개</small></div></div>
-        <div class="stat"><div class="k">이미 가져옴</div><div class="v">${P.skip.length}<small> 개</small></div></div>
+        <div class="stat"><div class="k">이미 가져옴${P.enrich.length ? ` · 상세 보강 ${P.enrich.length}` : ""}</div><div class="v">${P.skip.length + P.enrich.length}<small> 개</small></div></div>
       </div>
       <p class="muted" style="font-size:13px">같은 날 거리·시간이 같은 기존 기록은 새로 만들지 않고 가민 데이터(심박·케이던스·훈련 효과 등)로 보강해요. 메모·이미지·직접 정한 훈련 종류는 그대로 둬요. 다시 가져와도 가민 활동 ID로 중복을 막아요.</p>
       <label class="ck"><input type="checkbox" id="gi-cross" ${opts.cross ? 'checked' : ''}><span>크로스트레이닝(사이클·수영·로잉 등) ${acts.filter(a => a.kind === 'cross').length}개도 가져오기 (러닝 거리 통계에서는 제외)</span></label>
@@ -1087,7 +1087,7 @@ function openGarminImport(acts, gear, errs = []) {
         ${[...P.add.map(a => [a, '새 기록']), ...P.merge.map(({ a, w }) => [a, `보강: ${esc(w.title)}`]), ...P.complete.map(({ a, w }) => [a, `완료: ${esc(w.title)}`])]
           .sort((x, y) => (y[0].date + y[0].start).localeCompare(x[0].date + x[0].start)).slice(0, 300).map(([a, h]) => garminRow(a, h)).join('')}
         </tbody></table></div></details>
-      <div class="row gap" style="margin-top:14px"><button class="btn primary" id="gi-go" ${P.add.length + P.merge.length + P.complete.length + P.newShoes.length ? '' : 'disabled'}>가져오기</button><button class="btn" id="gi-cancel">취소</button><span class="msg" id="gi-msg"></span></div>`;
+      <div class="row gap" style="margin-top:14px"><button class="btn primary" id="gi-go" ${P.add.length + P.merge.length + P.complete.length + P.newShoes.length + P.enrich.length ? '' : 'disabled'}>가져오기</button><button class="btn" id="gi-cancel">취소</button><span class="msg" id="gi-msg"></span></div>`;
     $('#gi-cross')?.addEventListener('change', e => { opts.cross = e.target.checked; render(); });
     $('#gi-recalc')?.addEventListener('change', e => { opts.recalc = e.target.checked; });
     $('#gi-races')?.addEventListener('change', e => { opts.races = e.target.checked; });
@@ -1123,13 +1123,20 @@ async function runGarminImport(P, opts) {
     // 3) 새 기록 (묶음 저장)
     const rows = P.add.map(a => ({
       date: a.date, type: a.type, title: a.title, planned_distance: a.distance, status: 'done', actual_distance: a.distance, actual_time: a.time,
-      avg_hr: a.avgHr, max_hr: a.maxHr, cadence: a.cadence, details: a.details, source: 'garmin', garmin_id: a.garminId,
+      avg_hr: a.avgHr, max_hr: a.maxHr, cadence: a.cadence, details: a.details, source: 'garmin', garmin_id: a.garminId, metrics: a.metrics, rpe: a.metrics?.rpe || null,
       shoe_id: a.kind === 'run' ? shoeOf(a) : null, race_id: raceIdByDate[a.date] || (a.type === 'race' ? state.races.find(r => r.date === a.date)?.id : null) || null, images: [],
     }));
     for (let i = 0; i < rows.length; i += 150) {
       step(`새 기록 저장 중... ${Math.min(rows.length, i + 150)}/${rows.length}`);
       const saved = await store.insertWorkouts(rows.slice(i, i + 150));
       state.workouts.push(...saved);
+    }
+    // 3-2) 이미 가져온 기록에 상세 수치(심박 존·폼·VO2max 등) 보강
+    const enr = P.enrich.map(({ a, w }) => ({ ...w, metrics: a.metrics, rpe: w.rpe ?? a.metrics?.rpe ?? null }));
+    for (let i = 0; i < enr.length; i += 100) {
+      step(`상세 데이터 보강 중... ${Math.min(enr.length, i + 100)}/${enr.length}`);
+      const saved = await store.upsertWorkouts(enr.slice(i, i + 100));
+      for (const s of saved) { const k = state.workouts.findIndex(x => x.id === s.id); if (k >= 0) state.workouts[k] = s; }
     }
     // 4) 기존 기록 보강·계획 완료
     const upd = [...P.merge.map(x => ({ ...x, merge: true })), ...P.complete];
@@ -1138,14 +1145,14 @@ async function runGarminImport(P, opts) {
       step(`기존 기록 업데이트 중... ${++k}/${upd.length}`);
       const keepDetails = (w.details || '').replace(/\n*\[(가민|GPX|FIT|CSV) 기록\][\s\S]*$/, '').trim();
       const saved = await store.saveWorkout({ ...w, status: 'done', actual_distance: a.distance, actual_time: a.time, avg_hr: a.avgHr, max_hr: a.maxHr, cadence: a.cadence,
-        garmin_id: a.garminId, source: w.images?.length ? w.source : 'garmin', shoe_id: shoeOf(a) || w.shoe_id || null,
+        garmin_id: a.garminId, metrics: a.metrics, rpe: w.rpe ?? a.metrics?.rpe ?? null, source: w.images?.length ? w.source : 'garmin', shoe_id: shoeOf(a) || w.shoe_id || null,
         details: keepDetails ? `${keepDetails}\n\n${a.details}` : a.details,
         ...(merge ? {} : {}) });
       const i = state.workouts.findIndex(x => x.id === saved.id); state.workouts[i] = saved;
     }
     state.workouts.sort((x, y) => x.date.localeCompare(y.date));
     closeModal();
-    toast(`가민 기록 ${rows.length + upd.length}개를 반영했어요`);
+    toast(`가민 기록 ${rows.length + upd.length}개 반영${enr.length ? `, ${enr.length}개 상세 보강` : ''}`);
     refresh();
   } catch (e) {
     console.error(e); msg.className = 'msg err'; msg.textContent = '오류: ' + (e.message || e); btn.disabled = false;

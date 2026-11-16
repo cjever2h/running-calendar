@@ -75,6 +75,7 @@ export function parseActivities(j) {
       garminId: a.activityId, kind: isRun ? 'run' : 'cross', activityType: a.activityType, name, type, title, date, start,
       distance: km || null, time: hms(sec), sec, avgHr: a.avgHr || null, maxHr: a.maxHr || null, cadence,
       details: '[가민 기록]\n' + L.filter(Boolean).join('\n'),
+      metrics: garminMetrics(a, start),
     });
   }
   return out.sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start));
@@ -114,4 +115,20 @@ export function gearToShoe(gear) {
   return { brand, model, nickname: gear.nickname, purchase_date: gear.begin, max_km: gear.maxKm || 700, retired: gear.retired, initial_km: 0,
     purpose: /트레일|gtx|trail/i.test(gear.makeModel + gear.nickname) ? '트레일' : null, color: gear.retired ? '#94a3b8' : '#0ea5e9',
     notes: `가민 장비에서 가져옴${gear.end ? ` · 은퇴 ${gear.end}` : ''}` };
+}
+
+/** 상세 화면·성장 화면용 수치 (가민 존 기준 심박 존 시간 등) */
+function garminMetrics(a, start) {
+  const r1 = v => v == null ? null : Math.round(v * 10) / 10;
+  const z = [0, 1, 2, 3, 4, 5].map(i => Math.round((a['hrTimeInZone_' + i] || 0) / 1000));
+  return {
+    start, zones: z.some(Boolean) ? z : null, // [존 아래, 1, 2, 3, 4, 5] 초
+    gct: r1(a.avgGroundContactTime), vo: r1(a.avgVerticalOscillation), vr: r1(a.avgVerticalRatio),
+    stride: a.avgStrideLength ? Math.round(a.avgStrideLength) / 100 : null, power: a.avgPower || null,
+    vo2max: a.vO2MaxValue || null, load: a.activityTrainingLoad ? Math.round(a.activityTrainingLoad) : null,
+    te: a.aerobicTrainingEffect != null ? r1(a.aerobicTrainingEffect) : null, tea: a.anaerobicTrainingEffect != null ? r1(a.anaerobicTrainingEffect) : null,
+    teLabel: a.trainingEffectLabel || null, kcal: a.calories ? Math.round(a.calories / 4.184) : null,
+    elev: a.elevationGain != null ? Math.round(a.elevationGain / 100) : null, temp: a.minTemperature ?? null,
+    rpe: a.workoutRpe ? Math.round(a.workoutRpe / 10) : null, minHr: a.minHr || null,
+  };
 }

@@ -203,3 +203,5 @@ returns jsonb language sql stable security definer set search_path = public as $
 $$;
 revoke all on function public.get_shared_report(uuid) from public;
 grant execute on function public.get_shared_report(uuid) to anon, authenticated;
+-- v5: 상세 수치(심박 존 시간·폼·VO2max·부하 등)
+alter table public.workouts add column if not exists metrics jsonb;

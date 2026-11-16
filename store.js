@@ -6,7 +6,7 @@ let sb = null;
 
 const W_FIELDS = ['id', 'date', 'type', 'title', 'planned_distance', 'target_pace', 'details', 'status',
   'actual_distance', 'actual_time', 'avg_hr', 'rpe', 'memo', 'shoe_id', 'images',
-  'planned_duration', 'target_hr', 'phase', 'race_id', 'source', 'max_hr', 'cadence', 'garmin_id'];
+  'planned_duration', 'target_hr', 'phase', 'race_id', 'source', 'max_hr', 'cadence', 'garmin_id', 'metrics'];
 const S_FIELDS = ['id', 'brand', 'model', 'nickname', 'color', 'purpose', 'purchase_date', 'initial_km',
   'max_km', 'retired', 'notes'];
 const R_FIELDS = ['id', 'name', 'date', 'distance_km', 'goal_time', 'priority', 'location', 'notes', 'result_time', 'strategy'];
@@ -93,6 +93,13 @@ export async function insertWorkouts(list) {
   if (!rows.length) return [];
   if (!isCloud) { const d = lload(); d.workouts.push(...rows.map(r => ({ ...r, created_at: new Date().toISOString() }))); lsave(d); return rows; }
   return wchk(await sb.from('workouts').insert(rows).select());
+}
+/** 여러 기록 한 번에 갱신 (전체 행을 보내야 함) */
+export async function upsertWorkouts(list) {
+  const rows = list.map(w => clean(w, W_FIELDS));
+  if (!rows.length) return [];
+  if (!isCloud) { for (const r of rows) await saveWorkout(r); return rows; }
+  return wchk(await sb.from('workouts').upsert(rows).select());
 }
 export async function deleteWorkout(id) {
   if (!isCloud) { const d = lload(); d.workouts = d.workouts.filter(x => x.id !== id); lsave(d); return; }
